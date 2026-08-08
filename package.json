@@ -13,7 +13,7 @@
     "db:seed": "supabase db seed",
     "webhooks:listen": "stripe listen --forward-to localhost:3000/api/webhooks/stripe",
     "test:shopify": "node scripts/run-ts.mjs scripts/verify-shopify-pipeline.ts",
-    "webhook:simulate": "node scripts/simulate-shopify-webhook.mjs"
+    "webhook:simulate": "node --env-file-if-exists=.env.local scripts/simulate-shopify-webhook.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",

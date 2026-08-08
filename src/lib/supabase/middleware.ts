@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { supabasePublishableKey } from "@/lib/supabase/env";
 
 /** Refresh the Supabase auth session on every request (keeps login alive). */
 export async function updateSession(request: NextRequest) {
@@ -7,7 +8,7 @@ export async function updateSession(request: NextRequest) {
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabasePublishableKey!,
     {
       cookies: {
         getAll() {
