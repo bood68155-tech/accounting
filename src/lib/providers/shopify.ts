@@ -85,9 +85,13 @@ export function normalizeShopifyOrder(payload: ShopifyOrderPayload): NormalizedO
   });
 
   const subtotal = money(payload.subtotal_price);
-  const shipping = round(
+  // `total_shipping` is authoritative when present; some webhook configurations
+  // omit `shipping_lines`, so fall back to the sum of the lines.
+  const shippingFromTotal = money(payload.total_shipping);
+  const shippingFromLines = round(
     (payload.shipping_lines ?? []).reduce((sum, line) => sum + money(line.price), 0),
   );
+  const shipping = round(shippingFromTotal > 0 ? shippingFromTotal : shippingFromLines);
   const discounts = money(payload.total_discounts) || round(
     (payload.discount_codes ?? []).reduce((sum, code) => sum + money(code.amount), 0),
   );

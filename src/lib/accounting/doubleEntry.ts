@@ -70,7 +70,7 @@ export function createSaleEntry(order: Order, entryNumber: number): JournalEntry
   return validateEntry({
     store_id: order.store_id,
     entry_number: entryNumber,
-    entry_date: order.ordered_at,
+    entry_date: order.ordered_at.slice(0, 10), // journal_entries.entry_date is a date column
     description: `Sale ${order.order_number} — ${order.customer_name}`,
     reference: order.external_id,
     source: "order",
@@ -97,8 +97,9 @@ export function createSaleEntry(order: Order, entryNumber: number): JournalEntry
  *   Cr  Cost of Goods Sold         full COGS × refunded share
  */
 export function createRefundEntry(order: Order, refundAmount: number, entryNumber: number): JournalEntry {
-  const refundedShare = order.total_amount > 0 ? refundAmount / order.total_amount : 0;
-  const cogsRefunded = round2(fullCogs(order) * Math.min(1, refundedShare));
+  // Cap the share at 1 so an over-refund cannot reverse more COGS than was posted.
+  const refundedShare = order.total_amount > 0 ? Math.min(1, refundAmount / order.total_amount) : 0;
+  const cogsRefunded = round2(fullCogs(order) * refundedShare);
 
   return validateEntry({
     store_id: order.store_id,

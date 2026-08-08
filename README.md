@@ -123,6 +123,20 @@ npm run lint        # ESLint
 npm run build       # production build
 ```
 
+### 🧪 Testing the Shopify webhook
+
+```bash
+npm run test:shopify      # in-process: normalize -> true net profit -> double-entry entries
+npm run dev               # start the app, then in a second shell:
+npm run webhook:simulate  # POST signed orders/create payloads to /api/webhooks/shopify
+```
+
+`scripts/verify-shopify-pipeline.ts` exercises the real pipeline (HMAC checks, payload
+normalization, profit math, balanced sale/refund journal entries) without a server or
+database. `scripts/simulate-shopify-webhook.mjs` sends a realistic `orders/create`
+webhook to a running instance and asserts the parsed order + true net profit; set
+`SHOPIFY_WEBHOOK_SECRET` to test HMAC rejection, `BASE_URL` to target a different host.
+
 ## 🧮 The accounting model
 
 Every order generates a balanced journal entry:

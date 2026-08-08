@@ -11,7 +11,9 @@
     "typecheck": "tsc --noEmit",
     "db:push": "supabase db push",
     "db:seed": "supabase db seed",
-    "webhooks:listen": "stripe listen --forward-to localhost:3000/api/webhooks/stripe"
+    "webhooks:listen": "stripe listen --forward-to localhost:3000/api/webhooks/stripe",
+    "test:shopify": "node scripts/run-ts.mjs scripts/verify-shopify-pipeline.ts",
+    "webhook:simulate": "node scripts/simulate-shopify-webhook.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.7.0",
