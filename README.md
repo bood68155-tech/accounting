@@ -154,3 +154,36 @@ Cr  Inventory                 Σ item cost × qty
 
 The income statement is derived from those accounts, so revenue − COGS − fees −
 shipping always equals the true net profit shown on the dashboard.
+
+## 🛡️ Admin console
+
+`/admin` is a platform-wide console (service-role, bypasses RLS) that shows:
+
+| Tab | What it shows |
+| --- | --- |
+| **Overview** | Users, stores, orders & gateway fee KPIs, webhook health |
+| **Users** | Every account: profile (from `profiles`), stores, orders, revenue, ban/unban |
+| **Stores** | All stores with owner, platform, status, revenue & fees — update status |
+| **Webhooks** | `integration_events` across all stores, filtered by provider/status |
+| **Gateway fees** | Fee breakdown per provider: volume, effective rate, monthly series |
+
+### Access control
+
+- **Demo mode:** the console renders sample data (no auth required).
+- **Live mode:** only emails listed in `ADMIN_EMAILS` (comma-separated in `.env.local`)
+  can open `/admin`; every `/api/admin/*` route enforces the same check and returns
+  `401`/`403` otherwise.
+
+### API routes
+
+| Route | Method | Purpose |
+| --- | --- | --- |
+| `/api/admin/overview` | GET | Platform-wide KPIs + recent events |
+| `/api/admin/users` | GET | All users with profiles & aggregates |
+| `/api/admin/users/[id]` | PATCH | Update profile name or ban/unban |
+| `/api/admin/stores` | GET | All stores with owner & usage |
+| `/api/admin/stores/[id]` | PATCH | Change store status |
+| `/api/admin/events` | GET | Webhook events (+ `?provider=&status=`) |
+| `/api/admin/fees` | GET | Gateway fee breakdown |
+
+> Live data requires `SUPABASE_SERVICE_ROLE_KEY`; without it the console falls back to demo data.

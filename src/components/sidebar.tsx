@@ -10,6 +10,7 @@ import {
   IconReport,
   IconSettings,
   IconStore,
+  IconUsers,
 } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,10 @@ const NAV = [
       { href: "/ledger", label: "General Ledger", icon: IconLedger },
       { href: "/reports/income-statement", label: "Income Statement", icon: IconReport },
     ],
+  },
+  {
+    section: "Platform",
+    items: [{ href: "/admin", label: "Admin", icon: IconUsers }],
   },
   {
     section: "Settings",
