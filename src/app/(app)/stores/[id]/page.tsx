@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Topbar } from "@/components/topbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatCard } from "@/components/ui/stat-card";
 import { Table, TBody, TCell, THead, THeadCell, TRow } from "@/components/ui/table";
-import { IconCoin, IconOrders, IconSparkles, IconTruck, IconWebhook } from "@/components/icons";
+import { IconChevronRight, IconCoin, IconOrders, IconPackage, IconSparkles, IconTruck, IconWebhook } from "@/components/icons";
 import { fetchStoreOverview } from "@/lib/data/repository";
 import { computeOrderProfit, computeStats } from "@/lib/accounting/profitEngine";
 import { formatCompactCurrency, formatCurrency, formatPercent, relativeTime } from "@/lib/utils";
@@ -22,6 +23,16 @@ export default async function StoreDetailPage({ params }: { params: Promise<{ id
   const currency = store.currency ?? "USD";
   const recentOrders = [...data.orders].sort((a, b) => b.ordered_at.localeCompare(a.ordered_at)).slice(0, 6);
   const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://app.store-accountant.com"}/api/webhooks/${store.platform}`;
+  const productCount = data.products.length;
+
+  // Quick product stats
+  const avgMargin =
+    productCount > 0
+      ? data.products.reduce((s, p) => {
+          const margin = p.unit_price > 0 ? (p.unit_price - p.unit_cost) / p.unit_price : 0;
+          return s + margin;
+        }, 0) / productCount
+      : 0;
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
@@ -42,6 +53,33 @@ export default async function StoreDetailPage({ params }: { params: Promise<{ id
           <StatCard label="Orders" value={String(stats.total_orders)} icon={<IconOrders className="h-5 w-5" />} accent="#38bdf8" />
           <StatCard label="Avg net margin" value={formatPercent(stats.net_margin)} icon={<IconTruck className="h-5 w-5" />} accent="#a78bfa" />
         </div>
+
+        {/* Products quick access */}
+        <Card className="overflow-hidden">
+          <div className="flex flex-col gap-5 p-6 md:flex-row md:items-center">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
+              <IconPackage className="h-6 w-6" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="text-base font-semibold text-zinc-50">Products &amp; inventory</h3>
+                <Badge variant="success">{productCount} products</Badge>
+                {productCount > 0 && (
+                  <Badge variant="info">Avg margin {formatPercent(avgMargin)}</Badge>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-zinc-500">
+                Manage cost prices (سعر الشراء), selling prices (سعر البيع), and track profit margins for each product.
+              </p>
+            </div>
+            <Link
+              href={`/stores/${store.id}/products`}
+              className="flex h-10 items-center gap-1.5 rounded-xl border border-zinc-700 px-4 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-500 hover:bg-zinc-800/60"
+            >
+              Manage products <IconChevronRight className="h-4 w-4" />
+            </Link>
+          </div>
+        </Card>
 
         <div className="grid gap-6 xl:grid-cols-2">
           {/* Webhook configuration */}

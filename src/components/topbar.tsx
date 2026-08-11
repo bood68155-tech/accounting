@@ -1,11 +1,32 @@
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { IconBell, IconPlus, IconSearch } from "@/components/icons";
+import { IconBell, IconChevronLeft, IconPlus, IconSearch } from "@/components/icons";
 
-export function Topbar({ title, subtitle }: { title: string; subtitle?: string }) {
+export function Topbar({
+  title,
+  subtitle,
+  backHref,
+}: {
+  title: string;
+  subtitle?: string;
+  backHref?: string;
+}) {
   return (
     <header className="flex h-16 shrink-0 items-center justify-between gap-4 border-b border-zinc-800/70 px-6">
       <div className="min-w-0">
-        <h1 className="truncate text-[15px] font-semibold tracking-tight text-zinc-50">{title}</h1>
+        <div className="flex items-center gap-2">
+          {backHref && (
+            <Link
+              href={backHref}
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/70 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
+            >
+              <IconChevronLeft className="h-4 w-4" />
+            </Link>
+          )}
+          <h1 className="truncate text-[15px] font-semibold tracking-tight text-zinc-50">
+            {title}
+          </h1>
+        </div>
         {subtitle && <p className="truncate text-xs text-zinc-500">{subtitle}</p>}
       </div>
 
