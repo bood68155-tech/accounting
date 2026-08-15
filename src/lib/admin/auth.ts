@@ -1,9 +1,8 @@
-import { isSupabaseConfigured } from "@/lib/data/config";
 import { createClient } from "@/lib/supabase/server";
 
 // ─── Admin authorization ──────────────────────────────────────────────────────
 // Strict guard: ONLY the platform owner can access the admin console.
-// In live mode, the signed-in user's email must be the designated admin email.
+// The signed-in user's email must be the designated admin email.
 
 /** The sole authorized admin email for the platform. */
 const ADMIN_EMAIL = "bood68155@gmail.com";
@@ -34,13 +33,11 @@ export function isAdminEmail(email?: string | null): boolean {
 }
 
 export type AdminAccess =
-  | { granted: true; demo: boolean }
+  | { granted: true }
   | { granted: false; status: number; message: string };
 
 /** Guard used by admin API routes and the admin page. */
 export async function requireAdminAccess(): Promise<AdminAccess> {
-  if (!isSupabaseConfigured()) return { granted: true, demo: true };
-
   const supabase = await createClient();
   const {
     data: { user },
@@ -52,5 +49,5 @@ export async function requireAdminAccess(): Promise<AdminAccess> {
   if (!isAdminEmail(user.email)) {
     return { granted: false, status: 403, message: "Your account is not an administrator." };
   }
-  return { granted: true, demo: false };
+  return { granted: true };
 }

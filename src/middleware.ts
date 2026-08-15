@@ -3,8 +3,9 @@ import { updateSession } from "@/lib/supabase/middleware";
 import { supabasePublishableKey } from "@/lib/supabase/env";
 
 export async function middleware(request: NextRequest) {
-  // Skip session handling entirely until Supabase is configured, so the
-  // demo mode works without credentials.
+  // The app requires Supabase credentials (no demo mode). Until they are set,
+  // skip session handling so pages can render a "configure me" state instead
+  // of crashing.
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !supabasePublishableKey) {
     return NextResponse.next({ request });
   }

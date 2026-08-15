@@ -43,7 +43,7 @@ const NAV = [
   },
 ];
 
-export function Sidebar({ demoMode }: { demoMode: boolean }) {
+export function Sidebar({ tenantName }: { tenantName: string }) {
   const pathname = usePathname();
 
   const isActive = (href: string) =>
@@ -96,12 +96,12 @@ export function Sidebar({ demoMode }: { demoMode: boolean }) {
 
       <div className="border-t border-zinc-800/70 p-3">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
-          <p className="text-xs font-semibold text-zinc-200">Aurora & Oak</p>
-          <p className="mt-0.5 text-[11px] text-zinc-500">Shopify · connected</p>
+          <p className="truncate text-xs font-semibold text-zinc-200">{tenantName}</p>
+          <p className="mt-0.5 text-[11px] text-zinc-500">Isolated tenant workspace</p>
           <div className="mt-2.5 flex items-center gap-1.5">
-            <span className={cn("h-1.5 w-1.5 rounded-full", demoMode ? "bg-amber-400" : "bg-emerald-400", "animate-pulse-dot")} />
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-dot" />
             <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-              {demoMode ? "Demo mode" : "Live sync"}
+              Live sync
             </span>
           </div>
         </div>

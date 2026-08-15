@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Topbar } from "@/components/topbar";
-import { DemoBanner } from "@/components/demo-banner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatCard } from "@/components/ui/stat-card";
 import { Badge } from "@/components/ui/badge";
@@ -19,8 +18,38 @@ export const metadata: Metadata = { title: "Dashboard" };
 
 export default async function DashboardPage() {
   const data = await fetchStoreOverview();
-  const { stats, monthly, orders, recentEvents, mode, store } = data;
+  const { stats, monthly, orders, recentEvents, store } = data;
   const currency = store?.currency ?? "USD";
+
+  // New tenant with no connected store yet.
+  if (!store) {
+    return (
+      <main className="flex min-w-0 flex-1 flex-col">
+        <Topbar title="Dashboard" subtitle="Your tenant workspace · Live sync" />
+        <div className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-6 py-6">
+          <Card>
+            <CardContent className="flex flex-col items-center py-16 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10 ring-1 ring-emerald-500/30">
+                <IconSparkles className="h-6 w-6 text-emerald-400" />
+              </div>
+              <h2 className="mt-5 text-lg font-semibold text-zinc-50">Welcome to your workspace</h2>
+              <p className="mt-1.5 max-w-md text-sm leading-relaxed text-zinc-500">
+                Connect your first store to start computing true net profit, posting
+                double-entry journal entries and generating financial statements —
+                all isolated in your tenant&apos;s schema.
+              </p>
+              <Link
+                href="/stores/new"
+                className="mt-6 inline-flex h-10 items-center gap-1.5 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950 transition-colors hover:bg-emerald-400"
+              >
+                Connect a store
+              </Link>
+            </CardContent>
+          </Card>
+        </div>
+      </main>
+    );
+  }
 
   const recentOrders = [...orders].sort((a, b) => b.ordered_at.localeCompare(a.ordered_at)).slice(0, 7);
   const revenueSpark = monthly.map((m) => m.revenue);
@@ -35,11 +64,9 @@ export default async function DashboardPage() {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
-      <Topbar title="Dashboard" subtitle={`${store?.name ?? "Store"} · ${mode === "demo" ? "Demo workspace" : "Live workspace"}`} />
+      <Topbar title="Dashboard" subtitle={`${store.name} · Live workspace`} />
 
       <div className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-6 py-6">
-        {mode === "demo" && <DemoBanner />}
-
         {/* Stat cards */}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard

@@ -120,7 +120,6 @@ export interface AdminOverview {
 
 /** Everything the admin console renders. */
 export interface AdminData {
-  mode: "demo" | "live";
   users: AdminUser[];
   clients: AdminClient[];
   stores: AdminStore[];

@@ -2,14 +2,20 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { supabasePublishableKey } from "@/lib/supabase/env";
 
-/** Server-side Supabase client bound to the request cookies. */
-export async function createClient() {
+/**
+ * Server-side Supabase client bound to the request cookies.
+ *
+ * Pass the tenant schema name to scope queries to a tenant's data (multi-tenant
+ * schema-per-tenant isolation). Omit it to use the shared `public` schema.
+ */
+export async function createClient(schema?: string) {
   const cookieStore = await cookies();
 
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     supabasePublishableKey!,
     {
+      db: schema ? { schema } : undefined,
       cookies: {
         getAll() {
           return cookieStore.getAll();

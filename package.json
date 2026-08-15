@@ -10,7 +10,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "db:push": "supabase db push",
-    "db:seed": "supabase db seed",
+    "db:seed": "node --env-file-if-exists=.env.local scripts/seed-demo-data.mjs",
     "webhooks:listen": "stripe listen --forward-to localhost:3000/api/webhooks/stripe",
     "test:shopify": "node scripts/run-ts.mjs scripts/verify-shopify-pipeline.ts",
     "webhook:simulate": "node --env-file-if-exists=.env.local scripts/simulate-shopify-webhook.mjs"

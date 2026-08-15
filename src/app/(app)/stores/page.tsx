@@ -4,16 +4,14 @@ import { Topbar } from "@/components/topbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ConnectStoreButton } from "@/components/connect-store-button";
-import { IconChevronRight, IconExternal, IconShield, IconWebhook } from "@/components/icons";
-import { fetchStoreOverview } from "@/lib/data/repository";
-import { formatCompactCurrency, formatPercent } from "@/lib/utils";
+import { IconChevronRight, IconExternal, IconShield, IconStore, IconWebhook } from "@/components/icons";
+import { fetchStores } from "@/lib/data/repository";
 import { PLATFORM_META } from "@/lib/providers/meta";
 
 export const metadata: Metadata = { title: "Stores" };
 
 export default async function StoresPage() {
-  const data = await fetchStoreOverview();
-  const stats = data.stats;
+  const stores = await fetchStores();
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
@@ -27,48 +25,70 @@ export default async function StoresPage() {
           <ConnectStoreButton />
         </div>
 
-        {/* Connected store */}
-        <Card className="overflow-hidden">
-          <div className="flex flex-col gap-5 p-6 md:flex-row md:items-center">
-            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-600 text-lg font-bold text-emerald-950">
-              AO
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="text-base font-semibold text-zinc-50">{data.store?.name ?? "Aurora & Oak"}</h3>
-                <Badge variant="success">
-                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-dot" /> Connected
-                </Badge>
-                <Badge variant="neutral">{data.store?.platform}</Badge>
+        {/* Connected stores */}
+        {stores.length === 0 ? (
+          <Card>
+            <CardContent className="flex flex-col items-center py-14 text-center">
+              <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10">
+                <IconStore className="h-6 w-6 text-emerald-400" />
               </div>
-              <p className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
-                <IconExternal className="h-3.5 w-3.5" /> {data.store?.domain ?? "demo store"}
-                <span className="text-zinc-700">·</span>
-                Webhook verified {stats.period_orders}× in the last 30 days
+              <h3 className="mt-5 text-base font-semibold text-zinc-50">No stores connected yet</h3>
+              <p className="mt-1.5 max-w-sm text-sm leading-relaxed text-zinc-500">
+                Connect your first store to start ingesting webhooks and computing true net profit.
               </p>
-            </div>
-            <div className="flex items-center gap-8">
-              <div className="text-right">
-                <p className="text-xs text-zinc-500">30d revenue</p>
-                <p className="text-lg font-bold text-zinc-50 tabular-nums">{formatCompactCurrency(stats.period_revenue)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-zinc-500">30d net profit</p>
-                <p className="text-lg font-bold text-emerald-400 tabular-nums">{formatCompactCurrency(stats.period_net_profit)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs text-zinc-500">Net margin</p>
-                <p className="text-lg font-bold text-zinc-50 tabular-nums">{formatPercent(stats.net_margin)}</p>
-              </div>
               <Link
-                href={`/stores/${data.store?.id ?? "demo-aurora-oak"}`}
-                className="flex h-10 items-center gap-1.5 rounded-xl border border-zinc-700 px-4 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-500 hover:bg-zinc-800/60"
+                href="/stores/new"
+                className="mt-6 inline-flex h-10 items-center gap-1.5 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950 transition-colors hover:bg-emerald-400"
               >
-                Open <IconChevronRight className="h-4 w-4" />
+                Connect a store
               </Link>
-            </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="space-y-4">
+            {stores.map((store) => {
+              const initials = store.name
+                .split(" ")
+                .map((n) => n[0])
+                .join("")
+                .toUpperCase()
+                .slice(0, 2);
+              return (
+                <Card key={store.id} className="overflow-hidden">
+                  <div className="flex flex-col gap-5 p-6 md:flex-row md:items-center">
+                    <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-400 to-teal-600 text-lg font-bold text-emerald-950">
+                      {initials}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-base font-semibold text-zinc-50">{store.name}</h3>
+                        <Badge variant={store.status === "connected" ? "success" : "neutral"}>
+                          {store.status === "connected" && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-dot" />
+                          )}
+                          {store.status}
+                        </Badge>
+                        <Badge variant="neutral">{store.platform}</Badge>
+                        {store.currency && <Badge variant="info">{store.currency}</Badge>}
+                      </div>
+                      {store.domain && (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs text-zinc-500">
+                          <IconExternal className="h-3.5 w-3.5" /> {store.domain}
+                        </p>
+                      )}
+                    </div>
+                    <Link
+                      href={`/stores/${store.id}`}
+                      className="flex h-10 items-center gap-1.5 rounded-xl border border-zinc-700 px-4 text-sm font-medium text-zinc-200 transition-colors hover:border-zinc-500 hover:bg-zinc-800/60"
+                    >
+                      Open <IconChevronRight className="h-4 w-4" />
+                    </Link>
+                  </div>
+                </Card>
+              );
+            })}
           </div>
-        </Card>
+        )}
 
         {/* Integration catalog */}
         <div>
@@ -123,8 +143,8 @@ export default async function StoresPage() {
         <div className="flex items-start gap-3 rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.04] px-4 py-3">
           <IconShield className="mt-0.5 h-4.5 w-4.5 shrink-0 text-emerald-400" />
           <p className="text-xs leading-relaxed text-emerald-200/80">
-            Every webhook payload is cryptographically verified before touching your books, and Supabase Row Level
-            Security ensures each user only ever sees their own stores, orders and ledger.
+            Every webhook payload is cryptographically verified before touching your books, and each tenant&apos;s
+            data lives in its own isolated Postgres schema with Row Level Security — tenants can never see each other&apos;s data.
           </p>
         </div>
       </div>

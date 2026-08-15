@@ -14,7 +14,7 @@ export async function PATCH(request: Request, { params }: Params) {
   if (!access.granted) {
     return NextResponse.json({ error: access.message }, { status: access.status });
   }
-  if (access.demo || !hasAdminCredentials()) {
+  if (!hasAdminCredentials()) {
     return NextResponse.json(
       { error: "Writes require a live database (SUPABASE_SERVICE_ROLE_KEY)." },
       { status: 400 },
@@ -28,7 +28,18 @@ export async function PATCH(request: Request, { params }: Params) {
     return NextResponse.json({ error: "Invalid store status." }, { status: 400 });
   }
 
-  const { error } = await createAdminClient()
+  // Find the tenant schema that owns this store, then update the store there.
+  const admin = createAdminClient();
+  const { data: registry } = await admin
+    .from("store_registry")
+    .select("schema_name")
+    .eq("store_id", id)
+    .maybeSingle();
+  if (!registry?.schema_name) {
+    return NextResponse.json({ error: "Store not found in any tenant." }, { status: 404 });
+  }
+
+  const { error } = await createAdminClient(registry.schema_name)
     .from("stores")
     .update({ status: body.status as StoreStatus })
     .eq("id", id);

@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyStripeWebhook, normalizeStripeCharge } from "@/lib/providers/stripe";
 import { processPaymentWebhook } from "@/lib/webhooks/ingest";
-import { isSupabaseConfigured } from "@/lib/data/config";
-import { DEMO_STORE_ID } from "@/lib/data/demo";
 
 export const dynamic = "force-dynamic";
 
@@ -16,21 +14,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
+  const storeId = request.nextUrl.searchParams.get("store_id") ?? request.headers.get("x-store-id");
+  if (!storeId) {
+    return NextResponse.json(
+      { ok: false, error: "Missing store_id — pass ?store_id=<uuid> or an X-Store-Id header." },
+      { status: 400 },
+    );
+  }
+
   const verification = verifyStripeWebhook(
     rawBody,
     request.headers.get("stripe-signature"),
     process.env.STRIPE_WEBHOOK_SECRET ?? "",
   );
 
-  // In demo mode (no secret configured) accept payloads for evaluation.
-  const demoUnverified = !verification.valid && !isSupabaseConfigured();
-  if (!verification.valid && !demoUnverified) {
-    return NextResponse.json({ ok: false, error: verification.reason }, { status: 401 });
+  if (!verification.valid) {
+    const configured = Boolean(process.env.STRIPE_WEBHOOK_SECRET);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: verification.reason,
+        ...(configured ? {} : { hint: "Set STRIPE_WEBHOOK_SECRET (whsec_…) to enable signature verification." }),
+      },
+      { status: configured ? 401 : 503 },
+    );
   }
 
   const eventType = String(payload.type ?? "unknown");
-  const storeId = request.nextUrl.searchParams.get("store_id") ?? request.headers.get("x-store-id") ?? DEMO_STORE_ID;
-
   const object = (payload.data as { object?: Record<string, unknown> } | undefined)?.object ?? {};
   const payment = normalizeStripeCharge(object);
 

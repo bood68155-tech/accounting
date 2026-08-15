@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/logo";
-import { IconDatabase } from "@/components/icons";
 import { isSupabaseConfigured } from "@/lib/data/config";
 import { createClient } from "@/lib/supabase/client";
 
@@ -20,11 +19,9 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
-  const configured = isSupabaseConfigured();
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!configured) {
+    if (!isSupabaseConfigured()) {
       setError("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or legacy NEXT_PUBLIC_SUPABASE_ANON_KEY) to .env.local to enable authentication.");
       return;
     }
@@ -66,16 +63,6 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-5">
-            {!configured && (
-              <div className="mb-4 flex items-start gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-xs leading-relaxed text-amber-200/90">
-                <IconDatabase className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                <span>
-                  <span className="font-semibold text-amber-300">Supabase not configured.</span> Add your credentials to{" "}
-                  <code className="rounded bg-amber-500/10 px-1 font-mono text-[10px]">.env.local</code> to enable auth.
-                </span>
-              </div>
-            )}
-
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="email">Email</Label>

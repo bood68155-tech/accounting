@@ -21,7 +21,7 @@ export default async function ProductsPage({ params }: { params: Promise<{ id: s
         backHref={`/stores/${id}`}
       />
       <div className="mx-auto w-full max-w-7xl flex-1 px-6 py-6">
-        <ProductsManager storeId={store.id} products={data.products} currency={store.currency ?? "USD"} demo={data.mode === "demo"} />
+        <ProductsManager storeId={store.id} products={data.products} currency={store.currency ?? "USD"} />
       </div>
     </main>
   );

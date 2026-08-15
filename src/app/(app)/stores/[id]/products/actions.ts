@@ -1,12 +1,12 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { isSupabaseConfigured } from "@/lib/data/config";
+import { getTenantSchema } from "@/lib/tenants";
 import { createClient } from "@/lib/supabase/server";
 
 // ─── Product management actions ───────────────────────────────────────────────
-// Server actions for adding, updating, and deleting products.
-// In demo mode, actions are no-ops (demo data is read-only).
+// Server actions for adding, updating, and deleting products. All queries run
+// against the signed-in user's tenant schema (schema-per-tenant isolation).
 
 export type ProductFormData = {
   sku: string;
@@ -23,14 +23,13 @@ export async function addProduct(
   storeId: string,
   formData: ProductFormData,
 ): Promise<ActionResult> {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Demo mode — products are read-only." };
-  }
+  const schema = await getTenantSchema();
+  if (!schema) return { ok: false, error: "No tenant context — sign in and try again." };
 
   try {
-    const supabase = await createClient();
+    const supabase = await createClient(schema);
 
-    // Verify the store belongs to the current user.
+    // Verify the store belongs to the tenant (RLS scopes this automatically).
     const { data: store } = await supabase
       .from("stores")
       .select("id")
@@ -78,12 +77,11 @@ export async function updateProduct(
   productId: string,
   formData: ProductFormData,
 ): Promise<ActionResult> {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Demo mode — products are read-only." };
-  }
+  const schema = await getTenantSchema();
+  if (!schema) return { ok: false, error: "No tenant context — sign in and try again." };
 
   try {
-    const supabase = await createClient();
+    const supabase = await createClient(schema);
 
     const { error } = await supabase
       .from("products")
@@ -112,12 +110,11 @@ export async function deleteProduct(
   storeId: string,
   productId: string,
 ): Promise<ActionResult> {
-  if (!isSupabaseConfigured()) {
-    return { ok: false, error: "Demo mode — products are read-only." };
-  }
+  const schema = await getTenantSchema();
+  if (!schema) return { ok: false, error: "No tenant context — sign in and try again." };
 
   try {
-    const supabase = await createClient();
+    const supabase = await createClient(schema);
 
     const { error } = await supabase
       .from("products")

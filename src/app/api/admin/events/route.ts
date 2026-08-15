@@ -21,5 +21,5 @@ export async function GET(request: Request) {
       (!status || e.status === status),
   );
 
-  return NextResponse.json({ mode: access.demo ? "demo" : "live", events: filtered, summary });
+  return NextResponse.json({ events: filtered, summary });
 }

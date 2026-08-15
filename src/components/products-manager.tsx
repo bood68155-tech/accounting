@@ -16,7 +16,6 @@ interface ProductsManagerProps {
   storeId: string;
   products: Product[];
   currency: string;
-  demo: boolean;
 }
 
 const EMPTY_FORM: ProductFormData = {
@@ -27,7 +26,7 @@ const EMPTY_FORM: ProductFormData = {
   external_id: "",
 };
 
-export function ProductsManager({ storeId, products, currency, demo }: ProductsManagerProps) {
+export function ProductsManager({ storeId, products, currency }: ProductsManagerProps) {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<ProductFormData>(EMPTY_FORM);
@@ -163,19 +162,11 @@ export function ProductsManager({ storeId, products, currency, demo }: ProductsM
             <CardTitle>Products &amp; inventory</CardTitle>
             <CardDescription>Manage cost prices (سعر الشراء) and selling prices (سعر البيع) with automatic profit calculation</CardDescription>
           </div>
-          <Button size="sm" onClick={startAdd} disabled={demo || showForm}>
+          <Button size="sm" onClick={startAdd} disabled={showForm}>
             <IconPlus className="h-4 w-4" /> Add product
           </Button>
         </CardHeader>
         <CardContent className="pt-2">
-          {demo && (
-            <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.04] px-4 py-3">
-              <p className="text-xs text-amber-200/80">
-                Demo mode — product management is read-only. Connect Supabase to add, edit, and delete products.
-              </p>
-            </div>
-          )}
-
           {/* Add/Edit form */}
           {showForm && (
             <div className="mb-6 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-5">
@@ -293,7 +284,7 @@ export function ProductsManager({ storeId, products, currency, demo }: ProductsM
                 )}
 
                 <div className="flex items-center gap-2">
-                  <Button type="submit" size="sm" disabled={pending || demo}>
+                  <Button type="submit" size="sm" disabled={pending}>
                     {pending ? "Saving…" : editingId ? "Update product" : "Add product"}
                   </Button>
                   <Button type="button" size="sm" variant="ghost" onClick={cancel}>
@@ -363,7 +354,7 @@ export function ProductsManager({ storeId, products, currency, demo }: ProductsM
                           size="sm"
                           variant="ghost"
                           onClick={() => startEdit(product)}
-                          disabled={demo || showForm}
+                          disabled={showForm}
                         >
                           Edit
                         </Button>
@@ -376,7 +367,6 @@ export function ProductsManager({ storeId, products, currency, demo }: ProductsM
                             const result = await deleteProduct(storeId, product.id ?? "");
                             if (!result.ok) alert(result.error);
                           }}
-                          disabled={demo}
                         >
                           Delete
                         </Button>

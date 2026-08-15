@@ -3,21 +3,22 @@ import { toOrder, type NormalizedOrder, type NormalizedPayment } from "@/lib/pro
 import { computeOrderProfit } from "@/lib/accounting/profitEngine";
 import { createFeeEntry, createRefundEntry, createSaleEntry } from "@/lib/accounting/doubleEntry";
 import { hasAdminCredentials, createAdminClient } from "@/lib/supabase/admin";
-import { isSupabaseConfigured } from "@/lib/data/config";
 
 /**
  * ── Webhook ingestion pipeline ────────────────────────────────────────────────
  * 1. Verify signature (in the route)
  * 2. Normalize payload → canonical order/payment
- * 3. Persist order + items (live mode, service-role)
- * 4. Compute true net profit
- * 5. Post balanced double-entry journal entries
- * 6. Log the integration event
+ * 3. Resolve the tenant schema via public.store_registry
+ * 4. Persist order + items (service-role, inside the tenant schema)
+ * 5. Compute true net profit
+ * 6. Post balanced double-entry journal entries
+ * 7. Log the integration event
+ *
+ * All writes happen in the store's tenant schema — schema-per-tenant isolation.
  */
 
 export interface IngestResult {
   ok: boolean;
-  demo: boolean;
   eventType: string;
   order?: Order;
   profit?: ProfitBreakdown;
@@ -25,17 +26,32 @@ export interface IngestResult {
   message: string;
 }
 
-async function logEvent(input: {
-  storeId: string;
-  provider: string;
-  eventType: string;
-  payload: Record<string, unknown>;
-  status: "processed" | "failed";
-  error?: string;
-}) {
-  if (!hasAdminCredentials()) return;
+/** Find the tenant schema that owns a store (via the shared registry). */
+async function resolveStoreSchema(storeId: string): Promise<string | null> {
+  if (!hasAdminCredentials()) return null;
+  const { data, error } = await createAdminClient()
+    .from("store_registry")
+    .select("schema_name")
+    .eq("store_id", storeId)
+    .maybeSingle();
+  if (error || !data) return null;
+  return data.schema_name ?? null;
+}
+
+async function logEvent(
+  schema: string | null,
+  input: {
+    storeId: string;
+    provider: string;
+    eventType: string;
+    payload: Record<string, unknown>;
+    status: "processed" | "failed";
+    error?: string;
+  },
+) {
+  if (!schema || !hasAdminCredentials()) return;
   try {
-    await createAdminClient().from("integration_events").insert({
+    await createAdminClient(schema).from("integration_events").insert({
       store_id: input.storeId,
       provider: input.provider,
       event_type: input.eventType,
@@ -49,8 +65,12 @@ async function logEvent(input: {
   }
 }
 
-async function persistOrder(order: Order, rawPayload?: Record<string, unknown>) {
-  const supabase = createAdminClient();
+async function persistOrder(
+  schema: string,
+  order: Order,
+  rawPayload?: Record<string, unknown>,
+) {
+  const supabase = createAdminClient(schema);
   const { data: existing } = await supabase
     .from("orders")
     .select("id, entry_numbers")
@@ -105,9 +125,9 @@ async function persistOrder(order: Order, rawPayload?: Record<string, unknown>) 
   return { upserted: true, entryNumbers: [] as number[] };
 }
 
-async function persistEntries(entries: JournalEntry[]) {
+async function persistEntries(schema: string, entries: JournalEntry[]) {
   if (entries.length === 0 || !hasAdminCredentials()) return;
-  const supabase = createAdminClient();
+  const supabase = createAdminClient(schema);
   for (const entry of entries) {
     const { data: inserted, error } = await supabase
       .from("journal_entries")
@@ -139,8 +159,8 @@ async function persistEntries(entries: JournalEntry[]) {
   }
 }
 
-async function postEntriesForOrder(order: Order): Promise<number[]> {
-  const { data: next } = await createAdminClient()
+async function postEntriesForOrder(schema: string, order: Order): Promise<number[]> {
+  const { data: next } = await createAdminClient(schema)
     .from("journal_entries")
     .select("entry_number")
     .order("entry_number", { ascending: false })
@@ -152,11 +172,11 @@ async function postEntriesForOrder(order: Order): Promise<number[]> {
     entryNumber += 1;
     entries.push(createRefundEntry(order, order.refund_amount, entryNumber));
   }
-  await persistEntries(entries);
+  await persistEntries(schema, entries);
 
   // Track posted entry numbers on the order row.
   const numbers = entries.map((e) => e.entry_number);
-  await createAdminClient()
+  await createAdminClient(schema)
     .from("orders")
     .update({ entry_numbers: numbers })
     .eq("store_id", order.store_id)
@@ -175,22 +195,33 @@ export async function processOrderWebhook(input: {
 }): Promise<IngestResult> {
   const order = toOrder(input.normalized, input.storeId, input.storeCurrency);
   const profit = computeOrderProfit(order);
-  const demo = !isSupabaseConfigured();
-  const canPersist = !demo && hasAdminCredentials();
 
-  let entryNumbers: number[] = [];
+  if (!hasAdminCredentials()) {
+    return {
+      ok: true,
+      eventType: input.eventType,
+      order,
+      profit,
+      message: `Order ${order.order_number} computed — true net profit ${profit.net_profit.toFixed(2)}. Not persisted: set SUPABASE_SERVICE_ROLE_KEY to enable live ingestion.`,
+    };
+  }
 
   try {
-    if (canPersist) {
-      const { upserted, entryNumbers: existingNumbers } = await persistOrder(order, input.rawPayload);
-      if (upserted) {
-        entryNumbers = await postEntriesForOrder(order);
-      } else {
-        entryNumbers = existingNumbers;
-      }
+    const schema = await resolveStoreSchema(input.storeId);
+    if (!schema) {
+      return {
+        ok: false,
+        eventType: input.eventType,
+        order,
+        profit,
+        message: `Store ${input.storeId} is not registered to a tenant. Connect the store first, then replay this webhook.`,
+      };
     }
 
-    await logEvent({
+    const { upserted, entryNumbers: existingNumbers } = await persistOrder(schema, order, input.rawPayload);
+    const entryNumbers = upserted ? await postEntriesForOrder(schema, order) : existingNumbers;
+
+    await logEvent(schema, {
       storeId: input.storeId,
       provider: input.provider,
       eventType: input.eventType,
@@ -198,32 +229,8 @@ export async function processOrderWebhook(input: {
       status: "processed",
     });
 
-    if (demo) {
-      return {
-        ok: true,
-        demo,
-        eventType: input.eventType,
-        order,
-        profit,
-        entryNumbers,
-        message: `Demo mode: order ${order.order_number} accepted — true profit ${profit.net_profit.toFixed(2)} (journal entries computed, not persisted). Configure Supabase to go live.`,
-      };
-    }
-
-    if (!canPersist) {
-      return {
-        ok: true,
-        demo: false,
-        eventType: input.eventType,
-        order,
-        profit,
-        message: `Order ${order.order_number} computed — true net profit ${profit.net_profit.toFixed(2)}. Not persisted: set SUPABASE_SERVICE_ROLE_KEY to enable live ingestion.`,
-      };
-    }
-
     return {
       ok: true,
-      demo: false,
       eventType: input.eventType,
       order,
       profit,
@@ -231,7 +238,8 @@ export async function processOrderWebhook(input: {
       message: `Order ${order.order_number} processed — true net profit ${profit.net_profit.toFixed(2)}, ${entryNumbers.length} journal entr${entryNumbers.length === 1 ? "y" : "ies"} posted.`,
     };
   } catch (error) {
-    await logEvent({
+    const schema = await resolveStoreSchema(input.storeId).catch(() => null);
+    await logEvent(schema, {
       storeId: input.storeId,
       provider: input.provider,
       eventType: input.eventType,
@@ -241,7 +249,6 @@ export async function processOrderWebhook(input: {
     });
     return {
       ok: false,
-      demo,
       eventType: input.eventType,
       order,
       profit,
@@ -258,19 +265,34 @@ export async function processPaymentWebhook(input: {
   eventType: string;
   rawPayload: Record<string, unknown>;
 }): Promise<IngestResult> {
-  const demo = !isSupabaseConfigured();
-  const canPersist = !demo && hasAdminCredentials();
   const message = `Payment ${input.payment.external_id} — gateway fee ${input.payment.fee.toFixed(2)} (${input.payment.amount.toFixed(2)} charged, ${input.payment.net.toFixed(2)} net).`;
 
+  if (!hasAdminCredentials()) {
+    return {
+      ok: true,
+      eventType: input.eventType,
+      message: `Computed — not persisted: set SUPABASE_SERVICE_ROLE_KEY to enable live ingestion. ${message}`,
+    };
+  }
+
   try {
-    if (canPersist && input.payment.fee > 0) {
-      const { data: next } = await createAdminClient()
+    const schema = await resolveStoreSchema(input.storeId);
+    if (!schema) {
+      return {
+        ok: false,
+        eventType: input.eventType,
+        message: `Store ${input.storeId} is not registered to a tenant. Connect the store first, then replay this webhook.`,
+      };
+    }
+
+    if (input.payment.fee > 0) {
+      const { data: next } = await createAdminClient(schema)
         .from("journal_entries")
         .select("entry_number")
         .order("entry_number", { ascending: false })
         .limit(1);
       const entryNumber = (next?.[0]?.entry_number ?? 0) + 1;
-      await persistEntries([
+      await persistEntries(schema, [
         createFeeEntry(
           input.storeId,
           entryNumber,
@@ -282,7 +304,7 @@ export async function processPaymentWebhook(input: {
       ]);
     }
 
-    await logEvent({
+    await logEvent(schema, {
       storeId: input.storeId,
       provider: input.provider,
       eventType: input.eventType,
@@ -292,12 +314,12 @@ export async function processPaymentWebhook(input: {
 
     return {
       ok: true,
-      demo,
       eventType: input.eventType,
-      message: demo ? `Demo mode: ${message}` : message,
+      message,
     };
   } catch (error) {
-    await logEvent({
+    const schema = await resolveStoreSchema(input.storeId).catch(() => null);
+    await logEvent(schema, {
       storeId: input.storeId,
       provider: input.provider,
       eventType: input.eventType,
@@ -307,7 +329,6 @@ export async function processPaymentWebhook(input: {
     });
     return {
       ok: false,
-      demo,
       eventType: input.eventType,
       message: `Processing failed: ${String(error)}`,
     };

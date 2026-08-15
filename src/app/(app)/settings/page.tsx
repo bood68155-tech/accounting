@@ -7,13 +7,16 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { IconShield } from "@/components/icons";
-import { isSupabaseConfigured } from "@/lib/data/config";
 
 export const metadata: Metadata = { title: "Settings" };
 
-export default function SettingsPage() {
-  const live = isSupabaseConfigured();
+const SECRET_ROWS = [
+  { label: "Shopify webhook secret", env: "SHOPIFY_WEBHOOK_SECRET", masked: "••••••••••••••••" },
+  { label: "Stripe webhook secret", env: "STRIPE_WEBHOOK_SECRET", masked: "whsec_••••••••••••" },
+  { label: "PayPal webhook ID", env: "PAYPAL_WEBHOOK_ID", masked: "••••••••••••" },
+];
 
+export default function SettingsPage() {
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       <Topbar title="Settings" subtitle="Workspace, accounting defaults and security" />
@@ -27,11 +30,11 @@ export default function SettingsPage() {
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Full name</Label>
-                <Input defaultValue="Aurora Owner" />
+                <Input defaultValue="Workspace owner" />
               </div>
               <div className="space-y-1.5">
                 <Label>Email</Label>
-                <Input type="email" defaultValue="owner@auroraandoak.com" />
+                <Input type="email" defaultValue="owner@store.com" />
               </div>
             </div>
             <div className="flex justify-end">
@@ -94,19 +97,18 @@ export default function SettingsPage() {
             <IconShield className="h-4.5 w-4.5 text-emerald-400" />
           </CardHeader>
           <CardContent className="space-y-3 pt-4">
-            {[
-              { label: "Shopify webhook secret", value: live ? "••••••••••••••••" : "set SHOPIFY_WEBHOOK_SECRET" },
-              { label: "Stripe webhook secret", value: live ? "whsec_••••••••••••" : "set STRIPE_WEBHOOK_SECRET" },
-              { label: "PayPal webhook ID", value: live ? "••••••••••••" : "set PAYPAL_WEBHOOK_ID" },
-            ].map((row) => (
-              <div key={row.label} className="flex items-center justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3">
-                <span className="text-sm text-zinc-300">{row.label}</span>
-                <div className="flex items-center gap-2">
-                  <Badge variant={live ? "success" : "warning"}>{live ? "Configured" : "Env var required"}</Badge>
-                  <code className="font-mono text-[11px] text-zinc-500">{row.value}</code>
+            {SECRET_ROWS.map((row) => {
+              const configured = Boolean(process.env[row.env]);
+              return (
+                <div key={row.label} className="flex items-center justify-between gap-4 rounded-xl border border-zinc-800 bg-zinc-900/40 px-4 py-3">
+                  <span className="text-sm text-zinc-300">{row.label}</span>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={configured ? "success" : "warning"}>{configured ? "Configured" : "Env var required"}</Badge>
+                    <code className="font-mono text-[11px] text-zinc-500">{configured ? row.masked : `set ${row.env}`}</code>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
             <p className="text-xs leading-relaxed text-zinc-500">
               Secrets live in your environment variables — they are never stored in the database or sent to the browser.
             </p>

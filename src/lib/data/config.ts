@@ -6,8 +6,3 @@ export function isSupabaseConfigured(): boolean {
     process.env.NEXT_PUBLIC_SUPABASE_URL && supabasePublishableKey,
   );
 }
-
-/** True when demo mode should be used (no live backend available). */
-export function isDemoMode(): boolean {
-  return !isSupabaseConfigured();
-}

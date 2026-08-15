@@ -4,8 +4,9 @@
 
 Store Accountant connects to online stores via webhooks/APIs, computes **true net profit**
 (item cost, shipping and payment-gateway fees), automates **double-entry bookkeeping**
-(general ledger & COGS), and produces **financial statements** (income statement) — all
-scoped per user with Supabase Row Level Security.
+(general ledger & COGS), and produces **financial statements** (income statement). It is
+**multi-tenant**: every workspace gets its own Postgres schema (schema-per-tenant isolation)
+with Row Level Security, so tenants can never see each other's data.
 
 ![stack](https://img.shields.io/badge/Next.js%2016-TypeScript-000000?logo=next.js)
 ![stack](https://img.shields.io/badge/Tailwind%20CSS%20v4-dark?logo=tailwindcss)
@@ -21,8 +22,36 @@ scoped per user with Supabase Row Level Security.
 | **True net profit** | Per-order profit = net sales − COGS (item cost × qty) − gateway fees − shipping cost − refunds (`src/lib/accounting/profitEngine.ts`) |
 | **Double-entry books** | Every sale posts balanced journal entries — Dr Cash, Cr Sales, Dr COGS, Cr Inventory — with a trial balance that always matches (`src/lib/accounting/doubleEntry.ts`) |
 | **Statements** | Income statement (P&L), chart of accounts and journal, generated from the ledger (`src/lib/accounting/incomeStatement.ts`) |
-| **Security** | Supabase RLS on every table; users only ever see their own stores, orders and books |
-| **Demo mode** | Runs fully on deterministic sample data until Supabase credentials are added — explore everything with `npm run dev` |
+| **Multi-tenant isolation** | Schema-per-tenant: every workspace owns a dedicated Postgres schema with RLS; the shared `public` schema holds only tenant metadata |
+| **Admin console** | Platform-wide `/admin` console (service-role) aggregating every tenant schema |
+
+## 🧱 Multi-tenant architecture (schema-per-tenant)
+
+```
+public schema  (shared metadata only)
+├── tenants          id, owner_id, name, slug, schema_name
+├── tenant_users     tenant_id, user_id, role          ← RLS: users see their own rows
+└── store_registry   store_id → tenant schema           ← service-role only
+
+tenant_<uuid-hex> schema  (one per workspace, created on signup)
+├── stores, products, orders, order_items
+├── ledger_accounts, journal_entries, journal_lines
+└── integration_events
+    RLS: membership in public.tenant_users for this tenant
+```
+
+- **Provisioning** is automatic: `public.handle_new_user()` (trigger on `auth.users`)
+  creates the tenant, membership row and calls `public.create_tenant_schema()`
+  (security-definer DDL owned by postgres, executable by the service role only).
+- **Routing** happens in middleware: after login it resolves the user's tenant and
+  stores `tenant-id` / `tenant-schema` cookies. Every page, server action and webhook
+  scopes its queries to that schema (`createClient(schema)` → `db.schema`).
+- **Webhooks & admin** resolve the owning schema through `public.store_registry` using
+  the service role, so writes land in the right tenant schema.
+- The migration also **backfills tenants** for users who signed up before it ran.
+
+Schema: `supabase/migrations/20260808000000_init.sql` (enums, profiles, helpers) and
+`supabase/migrations/20260815000000_multi_tenant.sql` (tenants + schema provisioning).
 
 ## 🚀 Quick start
 
@@ -32,24 +61,32 @@ cp .env.example .env.local   # add your Supabase credentials
 npm run dev                  # → http://localhost:3000
 ```
 
-Without credentials the app runs in **demo mode** with sample data for
-"Aurora & Oak" — dashboard, orders, ledger, income statement and webhook
-endpoints all work, so you can evaluate the product immediately.
+The app requires a live Supabase project (no in-app demo mode). To explore with sample
+data, seed a demo tenant + store:
+
+```bash
+supabase link --project-ref <your-ref>
+supabase db push              # applies the migrations
+npm run db:seed               # creates a demo tenant + "Aurora & Oak" store with ~6 months of orders
+```
+
+`npm run db:seed` provisions a demo workspace for `SEED_USER_EMAIL` (defaults to the
+platform admin email) — sign up with that account first, then seed.
 
 ## 🗄️ Supabase setup
 
 1. Create a project at [supabase.com](https://supabase.com).
 2. Copy the API URL + anon key from **Project Settings → API** into `.env.local`.
-3. Run the migration (tables, triggers, functions & RLS):
+3. Run the migrations (tables, triggers, functions & RLS):
 
    ```bash
    supabase link --project-ref <your-ref>
    supabase db push
-   # or paste supabase/migrations/20260808000000_init.sql into the SQL editor
+   # or paste the migration files into the SQL editor, in order
    ```
 
-4. Optional: add `SUPABASE_SERVICE_ROLE_KEY` (server-only) so webhook routes can write orders & journal entries.
-5. Set provider secrets: `SHOPIFY_WEBHOOK_SECRET`, `STRIPE_WEBHOOK_SECRET`, `PAYPAL_WEBHOOK_ID`.
+4. Add `SUPABASE_SERVICE_ROLE_KEY` (server-only) so webhook routes can write orders & journal entries.
+5. Set provider secrets: `SHOPIFY_WEBHOOK_SECRET`, `STRIPE_WEBHOOK_SECRET`, `PAYPAL_WEBHOOK_ID` (webhooks reject unverified payloads when these are unset).
 
 ## 🔗 Connecting a store (webhooks)
 
@@ -62,29 +99,19 @@ Each provider has a verified endpoint:
 | Stripe | `POST /api/webhooks/stripe` | Timestamped HMAC (`Stripe-Signature`) |
 | PayPal | `POST /api/webhooks/paypal` | RSA over transmission certificate |
 
-Pass `?store_id=<uuid>` (or `X-Store-Id` header) to route events to a store;
-it defaults to the demo store in demo mode. Each accepted order:
+Pass `?store_id=<uuid>` (or `X-Store-Id` header) — it is **required** and routes the
+event to the store's tenant schema. Each accepted order:
 
 1. is verified & normalized to a canonical order (with item costs),
 2. gets a true net profit computed,
 3. posts sale/refund journal entries,
 4. records an `integration_events` row.
 
-Try it in demo mode:
+Try it with the simulator (app running):
 
 ```bash
-curl -X POST http://localhost:3000/api/webhooks/shopify \
-  -H "Content-Type: application/json" \
-  -H "X-Shopify-Hmac-SHA256: any" \
-  -d '{"id": 9001, "name": "#9001", "email": "a@b.co", "subtotal_price": "48.00",
-       "total_tax": "3.48", "total_shipping": "6.95", "total_price": "58.43",
-       "financial_status": "paid", "line_items": [
-         {"title": "Amber + Cedar Candle (8oz)", "sku": "AUR-101", "price": "24.00",
-          "quantity": 2, "cost": "4.60"}]}'
+SHOPIFY_WEBHOOK_SECRET=... STORE_ID=<store-uuid> npm run webhook:simulate
 ```
-
-> Demo mode accepts the payload and returns the computed profit + journal entries
-> without persisting. In live mode the same request writes to Supabase.
 
 ## 📁 Project structure
 
@@ -99,6 +126,7 @@ src/
 │   │   ├── ledger/                 # journal entries + chart of accounts
 │   │   └── reports/income-statement/
 │   ├── login | signup/             # Supabase auth
+│   ├── admin/                      # platform-wide console (service-role)
 │   └── api/webhooks/{shopify,stripe,paypal,woocommerce}/
 ├── components/
 │   ├── charts/                     # hand-rolled SVG charts (no chart lib)
@@ -108,11 +136,13 @@ src/
 ├── lib/
 │   ├── accounting/                 # chart of accounts, double entry, profit engine, P&L
 │   ├── providers/                  # signature verification + payload normalization
-│   ├── supabase/                   # client / server / admin / middleware
-│   ├── webhooks/ingest.ts          # persist → profit → journal → event log
-│   └── data/                       # demo dataset + repository (demo ⇄ live)
+│   ├── supabase/                   # client / server / admin / middleware (schema-aware)
+│   ├── tenants.ts                  # tenant context helpers (cookies → schema)
+│   ├── webhooks/ingest.ts          # persist → profit → journal → event log (tenant-scoped)
+│   └── data/repository.ts          # page reads, scoped to the tenant schema
 └── types/                          # shared domain types
-supabase/migrations/                # SQL schema with RLS
+supabase/migrations/                # SQL schema: shared metadata + schema-per-tenant provisioning
+scripts/seed-demo-data.mjs          # demo tenant + store + orders (npm run db:seed)
 ```
 
 ## 🧰 Tooling
@@ -121,6 +151,7 @@ supabase/migrations/                # SQL schema with RLS
 npm run typecheck   # TypeScript strict check
 npm run lint        # ESLint
 npm run build       # production build
+npm run db:seed     # seed a demo tenant + store (requires service role + SEED_USER_EMAIL)
 ```
 
 ### 🧪 Testing the Shopify webhook
@@ -128,14 +159,14 @@ npm run build       # production build
 ```bash
 npm run test:shopify      # in-process: normalize -> true net profit -> double-entry entries
 npm run dev               # start the app, then in a second shell:
-npm run webhook:simulate  # POST signed orders/create payloads to /api/webhooks/shopify
+SHOPIFY_WEBHOOK_SECRET=... STORE_ID=<store-uuid> npm run webhook:simulate
 ```
 
 `scripts/verify-shopify-pipeline.ts` exercises the real pipeline (HMAC checks, payload
 normalization, profit math, balanced sale/refund journal entries) without a server or
 database. `scripts/simulate-shopify-webhook.mjs` sends a realistic `orders/create`
-webhook to a running instance and asserts the parsed order + true net profit; set
-`SHOPIFY_WEBHOOK_SECRET` to test HMAC rejection, `BASE_URL` to target a different host.
+webhook to a running instance and asserts the parsed order + true net profit + HMAC
+rejection; set `BASE_URL` to target a different host.
 
 ## 🧮 The accounting model
 
@@ -157,7 +188,8 @@ shipping always equals the true net profit shown on the dashboard.
 
 ## 🛡️ Admin console
 
-`/admin` is a platform-wide console (service-role, bypasses RLS) that shows:
+`/admin` is a platform-wide console (service-role, bypasses RLS) that aggregates data
+across **every tenant schema**:
 
 | Tab | What it shows |
 | --- | --- |
@@ -169,10 +201,10 @@ shipping always equals the true net profit shown on the dashboard.
 
 ### Access control
 
-- **Demo mode:** the console renders sample data (no auth required).
-- **Live mode:** only emails listed in `ADMIN_EMAILS` (comma-separated in `.env.local`)
-  can open `/admin`; every `/api/admin/*` route enforces the same check and returns
-  `401`/`403` otherwise.
+Only emails listed in `ADMIN_EMAILS` (comma-separated in `.env.local`, plus the
+hardcoded platform owner) can open `/admin`; every `/api/admin/*` route enforces the
+same check and returns `401`/`403` otherwise. A PIN gate (`ADMIN_PIN`, httpOnly
+HMAC-signed cookie) adds a second factor.
 
 ### API routes
 
@@ -182,8 +214,8 @@ shipping always equals the true net profit shown on the dashboard.
 | `/api/admin/users` | GET | All users with profiles & aggregates |
 | `/api/admin/users/[id]` | PATCH | Update profile name or ban/unban |
 | `/api/admin/stores` | GET | All stores with owner & usage |
-| `/api/admin/stores/[id]` | PATCH | Change store status |
+| `/api/admin/stores/[id]` | PATCH | Change store status (resolved via `store_registry`) |
 | `/api/admin/events` | GET | Webhook events (+ `?provider=&status=`) |
 | `/api/admin/fees` | GET | Gateway fee breakdown |
 
-> Live data requires `SUPABASE_SERVICE_ROLE_KEY`; without it the console falls back to demo data.
+> Live data requires `SUPABASE_SERVICE_ROLE_KEY`.

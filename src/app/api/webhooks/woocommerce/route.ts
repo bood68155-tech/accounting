@@ -2,12 +2,11 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeWooOrder } from "@/lib/providers/woo";
 import { processOrderWebhook } from "@/lib/webhooks/ingest";
-import { DEMO_STORE_ID } from "@/lib/data/demo";
 
 export const dynamic = "force-dynamic";
 
 function verifyWooSignature(rawBody: string, signature: string | null, secret: string): boolean {
-  if (!secret) return true; // no secret configured — skip verification
+  if (!secret) return false; // no secret configured → cannot verify
   if (!signature) return false;
   const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest("base64");
   const a = Buffer.from(expected, "utf8");
@@ -18,8 +17,27 @@ function verifyWooSignature(rawBody: string, signature: string | null, secret: s
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
 
-  const signature = request.headers.get("x-wc-webhook-signature");
+  const storeId = request.nextUrl.searchParams.get("store_id") ?? request.headers.get("x-store-id");
+  if (!storeId) {
+    return NextResponse.json(
+      { ok: false, error: "Missing store_id — pass ?store_id=<uuid> or an X-Store-Id header." },
+      { status: 400 },
+    );
+  }
+
   const secret = process.env.WOO_CONSUMER_SECRET ?? "";
+  if (!secret) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "WOO_CONSUMER_SECRET is not configured — cannot verify webhook signatures.",
+        hint: "Set WOO_CONSUMER_SECRET to enable signature verification.",
+      },
+      { status: 503 },
+    );
+  }
+
+  const signature = request.headers.get("x-wc-webhook-signature");
   if (!verifyWooSignature(rawBody, signature, secret)) {
     return NextResponse.json({ ok: false, error: "Signature mismatch" }, { status: 401 });
   }
@@ -32,7 +50,6 @@ export async function POST(request: NextRequest) {
   }
 
   const eventType = request.headers.get("x-wc-webhook-topic") ?? "order.updated";
-  const storeId = request.nextUrl.searchParams.get("store_id") ?? request.headers.get("x-store-id") ?? DEMO_STORE_ID;
 
   const normalized = normalizeWooOrder(payload);
   const result = await processOrderWebhook({

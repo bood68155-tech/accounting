@@ -11,7 +11,7 @@ export async function PATCH(request: Request, { params }: Params) {
   if (!access.granted) {
     return NextResponse.json({ error: access.message }, { status: access.status });
   }
-  if (access.demo || !hasAdminCredentials()) {
+  if (!hasAdminCredentials()) {
     return NextResponse.json(
       { error: "Writes require a live database (SUPABASE_SERVICE_ROLE_KEY)." },
       { status: 400 },

@@ -10,5 +10,5 @@ export async function GET() {
     return NextResponse.json({ error: access.message }, { status: access.status });
   }
   const overview = await fetchAdminOverview();
-  return NextResponse.json({ mode: access.demo ? "demo" : "live", overview });
+  return NextResponse.json({ overview });
 }

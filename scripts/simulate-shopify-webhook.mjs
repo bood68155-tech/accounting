@@ -5,16 +5,18 @@
  * Simulates Shopify sending an `orders/create` webhook to a running Store
  * Accountant instance and verifies the route's response:
  *
- *   POST /api/webhooks/shopify
+ *   POST /api/webhooks/shopify?store_id=<uuid>
  *
- * - Signs the body with a real HMAC-SHA256 when SHOPIFY_WEBHOOK_SECRET is set.
- * - In demo mode (no secret) unverified payloads are accepted for evaluation.
+ * - Signs the body with a real HMAC-SHA256 (SHOPIFY_WEBHOOK_SECRET is
+ *   required — the app rejects unverified payloads).
  * - Asserts parsing, true net profit, and journal-entry generation.
  *
  * Usage (app must be running: `npm run dev`):
- *   npm run webhook:simulate
- *   SHOPIFY_WEBHOOK_SECRET=... npm run webhook:simulate   # signed request
+ *   SHOPIFY_WEBHOOK_SECRET=... STORE_ID=<store-uuid> npm run webhook:simulate
  *   BASE_URL=http://localhost:3000 npm run webhook:simulate
+ *
+ * STORE_ID is the uuid of a store already connected in your tenant
+ * (see /stores). `npm run db:seed` creates a demo store you can target.
  */
 import { createHmac } from "node:crypto";
 
@@ -22,6 +24,16 @@ const BASE_URL = (process.env.BASE_URL ?? "http://localhost:3000").replace(/\/$/
 const SECRET = process.env.SHOPIFY_WEBHOOK_SECRET ?? "";
 const STORE_ID = process.env.STORE_ID ?? "";
 const ENDPOINT = `${BASE_URL}/api/webhooks/shopify${STORE_ID ? `?store_id=${encodeURIComponent(STORE_ID)}` : ""}`;
+
+if (!SECRET) {
+  console.error("\n❌ SHOPIFY_WEBHOOK_SECRET is required — the app rejects unverified webhooks.");
+  console.error("   Set it in .env.local and export it for this script (e.g. `set -a; . .env.local; set +a`).\n");
+  process.exit(1);
+}
+if (!STORE_ID) {
+  console.error("\n❌ STORE_ID is required — pass the uuid of a connected store (see /stores or `npm run db:seed`).\n");
+  process.exit(1);
+}
 
 // Realistic order: line items with costs, shipping lines, discount, gateway txn.
 const richOrder = {
@@ -79,16 +91,15 @@ function check(name, cond, detail) {
 }
 
 const approx = (a, b, eps = 0.001) => Math.abs(a - b) <= eps;
-const sign = (rawBody) =>
-  SECRET ? createHmac("sha256", SECRET).update(rawBody, "utf8").digest("hex") : "demo-accept-any-signature";
+const sign = (rawBody) => createHmac("sha256", SECRET).update(rawBody, "utf8").digest("hex");
 
-async function sendOrder(name, payload, topic = "orders/create") {
+async function sendOrder(name, payload, topic = "orders/create", signature) {
   const raw = JSON.stringify(payload);
   const res = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Shopify-Hmac-SHA256": sign(raw),
+      "X-Shopify-Hmac-SHA256": signature ?? sign(raw),
       "X-Shopify-Topic": topic,
       "X-Shopify-Shop-Domain": "auroraandoak.myshopify.com",
       "Connection": "close",
@@ -100,8 +111,7 @@ async function sendOrder(name, payload, topic = "orders/create") {
 }
 
 async function main() {
-  let demoMode = true;
-  console.log(`\nShopify webhook simulator -> ${ENDPOINT}${SECRET ? " (signed mode)" : " (demo mode, unverified payloads accepted)"}`);
+  console.log(`\nShopify webhook simulator -> ${ENDPOINT}\n`);
 
   // 0. Route must be reachable.
   let meta;
@@ -118,10 +128,9 @@ async function main() {
   console.log("\n-- Rich order (shipping lines + discount + gateway txn) --------------------");
   {
     const { res, json } = await sendOrder("rich", richOrder);
-    demoMode = json.demo === true;
     const o = json.order ?? {};
     const p = json.profit ?? {};
-    console.log(`  response: ${JSON.stringify({ ok: json.ok, demo: json.demo, status: res.status, message: json.message })}\n`);
+    console.log(`  response: ${JSON.stringify({ ok: json.ok, status: res.status, message: json.message })}\n`);
     check("HTTP 200", res.status === 200);
     check("ok: true", json.ok === true);
     check("parsed order_number", o.order_number === "#2001");
@@ -142,7 +151,7 @@ async function main() {
     const { res, json } = await sendOrder("minimal", minimalOrder);
     const o = json.order ?? {};
     const p = json.profit ?? {};
-    console.log(`  response: ${JSON.stringify({ ok: json.ok, demo: json.demo, status: res.status, message: json.message })}\n`);
+    console.log(`  response: ${JSON.stringify({ ok: json.ok, status: res.status, message: json.message })}\n`);
     check("HTTP 200", res.status === 200);
     check("ok: true", json.ok === true);
     check("parsed order_number", o.order_number === "#9001");
@@ -151,27 +160,11 @@ async function main() {
     check("true net profit = 45.75", approx(p.net_profit, 45.75));
   }
 
-  // 3. Signature enforcement - only in live mode (demo mode accepts unverified).
-  if (SECRET && !demoMode) {
-    console.log("\n-- HMAC enforcement -------------------------------------------------------");
-    const raw = JSON.stringify(richOrder);
-    const res = await fetch(ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Hmac-SHA256": "deadbeefdeadbeef",
-        "X-Shopify-Topic": "orders/create",
-        "Connection": "close",
-      },
-      body: raw,
-    });
-    const json = await res.json();
+  // 3. HMAC enforcement.
+  console.log("\n-- HMAC enforcement -------------------------------------------------------");
+  {
+    const { res, json } = await sendOrder("tampered", richOrder, "orders/create", "deadbeefdeadbeef");
     check("tampered signature rejected with 401", res.status === 401 && json.ok === false);
-  } else if (SECRET) {
-    console.log("\n-- HMAC enforcement: skipped (demo mode accepts unverified payloads; run with");
-    console.log("    Supabase credentials + SHOPIFY_WEBHOOK_SECRET to test 401 rejection) ---------");
-  } else {
-    console.log("\n-- HMAC enforcement: skipped (set SHOPIFY_WEBHOOK_SECRET to test signatures) --");
   }
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"}: ${passed} passed, ${failed} failed${failures.length ? "\n  " + failures.join("\n  ") : ""}\n`);

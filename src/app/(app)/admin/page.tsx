@@ -10,7 +10,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { DemoBanner } from "@/components/demo-banner";
 import {
   IconActivity,
   IconCoin,
@@ -25,7 +24,6 @@ import { Table, TBody, TCell, THead, THeadCell, TRow } from "@/components/ui/tab
 import { isAdminEmail } from "@/lib/admin/auth";
 import { ADMIN_PIN_COOKIE, pinTokenMatches } from "@/lib/admin/pin";
 import { fetchAdminData } from "@/lib/admin/queries";
-import { isSupabaseConfigured } from "@/lib/data/config";
 import { createClient } from "@/lib/supabase/server";
 import { cn, formatCompactCurrency, formatNumber, formatPercent, relativeTime } from "@/lib/utils";
 
@@ -54,19 +52,14 @@ const SUBSCRIPTION_LABEL: Record<string, string> = {
 };
 
 export default async function AdminPage() {
-  const demo = !isSupabaseConfigured();
-
   // ─── Email gate ─────────────────────────────────────────────────────────────
   // Strict guard: only the platform owner (bood68155@gmail.com) can access.
-  // Live mode checks the Supabase session; demo mode skips (no signed-in user).
-  if (!demo) {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) redirect("/login");
-    if (!isAdminEmail(user.email)) redirect("/dashboard");
-  }
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) redirect("/login");
+  if (!isAdminEmail(user.email)) redirect("/dashboard");
 
   // ─── PIN gate ───────────────────────────────────────────────────────────────
   // The cookie is httpOnly, holds an HMAC token keyed by the PIN (unforgeable
@@ -77,7 +70,7 @@ export default async function AdminPage() {
   }
 
   const data = await fetchAdminData();
-  const { overview, stores, fees, clients, mode } = data;
+  const { overview, stores, fees, clients } = data;
   const failureRate =
     overview.event_count > 0 ? overview.failed_events / overview.event_count : 0;
   const healthy = failureRate <= 0.05;
@@ -100,14 +93,10 @@ export default async function AdminPage() {
             </p>
           </div>
         </div>
-        <Badge variant={demo ? "warning" : "success"}>
-          {demo ? "Demo data" : "Live platform"}
-        </Badge>
+        <Badge variant="success">Live platform</Badge>
       </header>
 
       <div className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-6 py-6">
-        {demo && <DemoBanner />}
-
         {/* System stats */}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
@@ -330,10 +319,8 @@ export default async function AdminPage() {
                   </dd>
                 </div>
                 <div className="flex items-center justify-between rounded-lg bg-zinc-800/40 px-3 py-2">
-                  <dt className="text-xs text-zinc-500">Mode</dt>
-                  <dd className="text-xs font-medium text-zinc-200">
-                    {mode === "demo" ? "Demo" : "Live"}
-                  </dd>
+                  <dt className="text-xs text-zinc-500">Isolation</dt>
+                  <dd className="text-xs font-medium text-zinc-200">Schema-per-tenant</dd>
                 </div>
                 <div className="flex items-center justify-between rounded-lg bg-zinc-800/40 px-3 py-2">
                   <dt className="text-xs text-zinc-500">Events processed</dt>

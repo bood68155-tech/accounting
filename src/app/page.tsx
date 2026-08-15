@@ -37,8 +37,8 @@ const FEATURES = [
   },
   {
     icon: IconDatabase,
-    title: "Supabase & RLS",
-    body: "Postgres with row-level security means every user can only ever see their own stores, orders and books.",
+    title: "Schema-per-tenant isolation",
+    body: "Every workspace gets its own Postgres schema with RLS — tenants can never see each other's stores, orders or books.",
   },
   {
     icon: IconShield,
@@ -116,7 +116,7 @@ export default function LandingPage() {
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Button href="/dashboard" size="lg">
-              <IconZap className="h-4.5 w-4.5" /> Explore the live demo
+              <IconZap className="h-4.5 w-4.5" /> Get started
             </Button>
             <Button href="/login" size="lg" variant="outline">
               Create free account
@@ -259,11 +259,12 @@ export default function LandingPage() {
             Start seeing your real numbers today
           </h2>
           <p className="relative mx-auto mt-4 max-w-xl text-zinc-400">
-            Explore the fully-working demo with sample data, then connect your store and your first webhook.
+            Sign up free, connect your store, and your first webhook posts the books — profit, ledger and income
+            statement included.
           </p>
           <div className="relative mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
             <Button href="/dashboard" size="lg">
-              <IconSparkles className="h-4.5 w-4.5" /> Explore the demo
+              <IconSparkles className="h-4.5 w-4.5" /> Get started
             </Button>
             <Button href="/login" size="lg" variant="outline">
               Sign in

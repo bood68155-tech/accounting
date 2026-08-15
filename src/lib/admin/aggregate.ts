@@ -13,7 +13,7 @@ import type {
 import type { Platform, StoreStatus } from "@/types";
 import { round2 } from "@/lib/utils";
 
-// ─── Raw row shapes (Supabase rows or demo fixtures) ──────────────────────────
+// ─── Raw row shapes (Supabase rows from shared + tenant schemas) ──────────────
 
 export interface RawUser {
   id: string;
@@ -193,7 +193,6 @@ function computeFeeBreakdown(orders: RawOrder[]): FeeBreakdown {
 }
 
 export function aggregateAdminData(input: {
-  demo: boolean;
   users: RawUser[];
   profiles: RawProfile[];
   stores: RawStore[];
@@ -201,7 +200,7 @@ export function aggregateAdminData(input: {
   products: RawProduct[];
   events: RawEvent[];
 }): AdminData {
-  const { demo, users, profiles, stores, orders, products, events } = input;
+  const { users, profiles, stores, orders, products, events } = input;
 
   const profileById = new Map(profiles.map((p) => [p.id, p]));
   const storeNameById = new Map(stores.map((s) => [s.id, s.name]));
@@ -361,7 +360,6 @@ export function aggregateAdminData(input: {
   };
 
   return {
-    mode: demo ? "demo" : "live",
     users: adminUsers,
     clients: adminClients,
     stores: adminStores,

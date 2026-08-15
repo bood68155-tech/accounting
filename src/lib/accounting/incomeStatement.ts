@@ -18,7 +18,7 @@ function periodBounds(orders: Order[], from?: string, to?: string): { from: stri
   };
 }
 
-/** Build the statement from raw orders (used by the UI + demo mode). */
+/** Build the statement directly from raw orders (fast path for the UI). */
 export function buildIncomeStatementFromOrders(
   orders: Order[],
   from?: string,
