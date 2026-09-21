@@ -406,6 +406,8 @@ async function main() {
       .update({ entry_numbers: entries.map((e) => e.entry_number) })
       .eq("id", inserted.id);
 
+    // Events: replace per store so re-seeding stays idempotent.
+    await db.from("integration_events").delete().eq("store_id", DEMO_STORE_ID);
     const { error: eventError } = await db.from("integration_events").insert({
       store_id: DEMO_STORE_ID,
       provider: order.gateway_provider,

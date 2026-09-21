@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Store Accountant — multi-tenant schema-per-tenant isolation
+-- X — multi-tenant schema-per-tenant isolation
 --
 -- Architecture change: tenant data no longer lives in `public`. Instead:
 --   • public holds only shared metadata: tenants, tenant_users, store_registry
@@ -59,6 +59,8 @@ as $$
 declare
   v_schema_name text := 'tenant_' || replace(p_tenant_id::text, '-', '');
   v_membership text;
+  v_pgrst_setting text;
+  v_schemas text;
 begin
   -- Validate the identifier shape (tenant_ + 32 hex chars) before using %I.
   if v_schema_name !~ '^tenant_[0-9a-f]{32}$' then
@@ -269,9 +271,29 @@ begin
   execute format('grant execute on function %I.true_net_profit(uuid) to service_role', v_schema_name);
 
   -- ── privileges ──────────────────────────────────────────────────────────
-  -- Only authenticated users (signed-in browser clients) reach tenant schemas.
-  execute format('grant usage on schema %I to authenticated', v_schema_name);
+  -- Authenticated users (signed-in browser clients) reach tenant schemas
+  -- subject to RLS; the service role (webhooks, seed, admin) bypasses RLS.
+  execute format('grant usage on schema %I to authenticated, service_role', v_schema_name);
   execute format('grant select, insert, update, delete on all tables in schema %I to authenticated', v_schema_name);
+  execute format('grant all on all tables in schema %I to service_role', v_schema_name);
+  execute format('grant all on all sequences in schema %I to service_role', v_schema_name);
+
+  -- ── expose the schema to PostgREST (so the REST API can reach it) ──────
+  -- Supabase's PostgREST only serves schemas listed in the authenticator
+  -- role's pgrst.db_schemas. Append this tenant's schema and reload config.
+  select coalesce(
+    (select unnest(setconfig) from pg_db_role_setting
+      where setrole = (select oid from pg_roles where rolname = 'authenticator')
+        and unnest(setconfig) like 'pgrst.db_schemas=%'),
+    'pgrst.db_schemas=public, graphql_public'
+  ) into v_pgrst_setting;
+
+  v_schemas := replace(v_pgrst_setting, 'pgrst.db_schemas=', '');
+  if position(v_schema_name in v_schemas) = 0 then
+    v_schemas := v_schemas || ', ' || v_schema_name;
+    execute format('alter role authenticator set pgrst.db_schemas = %L', v_schemas);
+    perform pg_notify('pgrst', 'reload config');
+  end if;
 
   -- ── Row Level Security (membership in public.tenant_users) ─────────────
   v_membership := format(
