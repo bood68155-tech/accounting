@@ -22,7 +22,7 @@ export default async function StoreDetailPage({ params }: { params: Promise<{ id
   const stats = computeStats(store.id, data.orders);
   const currency = store.currency ?? "USD";
   const recentOrders = [...data.orders].sort((a, b) => b.ordered_at.localeCompare(a.ordered_at)).slice(0, 6);
-  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://app.store-accountant.com"}/api/webhooks/${store.platform}`;
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "https://app.x-accounting.com"}/api/webhooks/${store.platform}`;
   const productCount = data.products.length;
 
   // Quick product stats

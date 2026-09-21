@@ -59,7 +59,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           <CardHeader>
             <CardTitle className="text-lg">{mode === "login" ? "Welcome back" : "Create your account"}</CardTitle>
             <CardDescription>
-              {mode === "login" ? "Sign in to your Store Accountant workspace" : "Start automating your bookkeeping"}
+              {mode === "login" ? "Sign in to your X workspace" : "Start automating your bookkeeping"}
             </CardDescription>
           </CardHeader>
           <CardContent className="pt-5">

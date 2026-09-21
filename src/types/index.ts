@@ -1,4 +1,4 @@
-// ─── Store Accountant: shared domain types ────────────────────────────────────
+// ─── X: shared domain types ────────────────────────────────────
 
 export type Platform = "shopify" | "woocommerce" | "stripe" | "paypal" | "custom";
 

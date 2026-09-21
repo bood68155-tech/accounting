@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Store Accountant — initial schema
+-- X — initial schema
 -- Automated AI Accounting & Profitability Engine for E-commerce Stores
 --
 -- Everything is scoped to the authenticated user via Row Level Security:

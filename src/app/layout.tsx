@@ -14,8 +14,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Store Accountant — Automated AI Accounting for E-commerce",
-    template: "%s · Store Accountant",
+    default: "X — Automated AI Accounting for E-commerce",
+    template: "%s · X",
   },
   description:
     "Connect your store, compute true net profit (item cost, shipping & gateway fees), and get automated double-entry bookkeeping with income statements.",

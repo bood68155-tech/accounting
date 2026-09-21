@@ -111,7 +111,7 @@ export default function LandingPage() {
             , not just revenue.
           </h1>
           <p className="mx-auto mt-6 max-w-2xl text-lg leading-relaxed text-zinc-400">
-            Store Accountant connects to your online store, computes profit after item cost, shipping and payment
+            X connects to your online store, computes profit after item cost, shipping and payment
             fees, and runs your double-entry bookkeeping — general ledger, COGS and income statements included.
           </p>
           <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -134,7 +134,7 @@ export default function LandingPage() {
               <span className="h-2.5 w-2.5 rounded-full bg-amber-500/80" />
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/80" />
               <span className="ml-3 rounded-md bg-zinc-800 px-2 py-0.5 font-mono text-[10px] text-zinc-500">
-                app.store-accountant.com/dashboard
+                app.x-accounting.com/dashboard
               </span>
             </div>
             <div className="grid grid-cols-2 gap-px bg-zinc-800/60 md:grid-cols-4">
@@ -207,7 +207,7 @@ export default function LandingPage() {
             Revenue is vanity. <span className="text-emerald-400">Profit is sanity.</span>
           </h2>
           <p className="mt-4 text-zinc-400">
-            Store Accountant turns messy platform data into clean, double-entry books — so you always know what
+            X turns messy platform data into clean, double-entry books — so you always know what
             you&apos;re really making.
           </p>
         </div>
@@ -278,7 +278,7 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 md:flex-row">
           <Logo size={24} />
           <p className="text-xs text-zinc-600">
-            Store Accountant · Automated AI Accounting &amp; Profitability Engine for E-commerce
+            X · Automated AI Accounting &amp; Profitability Engine for E-commerce
           </p>
           <div className="flex gap-6 text-xs text-zinc-500">
             <a href="#features" className="transition-colors hover:text-zinc-300">Features</a>

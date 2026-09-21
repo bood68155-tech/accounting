@@ -25,7 +25,7 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
 
-  const webhookUrl = `${typeof window !== "undefined" ? window.location.origin : "https://app.store-accountant.com"}/api/webhooks/${platform}`;
+  const webhookUrl = `${typeof window !== "undefined" ? window.location.origin : "https://app.x-accounting.com"}/api/webhooks/${platform}`;
 
   const canNext = step === 0 && name.trim().length > 0;
 
@@ -117,7 +117,7 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
               <IconWebhook className="mt-0.5 h-4.5 w-4.5 shrink-0 text-sky-400" />
               <p className="text-xs leading-relaxed text-sky-200/90">
                 Create a webhook in your {PLATFORMS.find((p) => p.id === platform)?.name} admin and point it at this
-                endpoint. Store Accountant verifies signatures, computes true profit, and posts journal entries
+                endpoint. X verifies signatures, computes true profit, and posts journal entries
                 automatically.
               </p>
             </div>

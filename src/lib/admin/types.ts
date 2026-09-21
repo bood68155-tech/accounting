@@ -1,4 +1,4 @@
-// ─── Store Accountant: admin console domain types ─────────────────────────────
+// ─── X: admin console domain types ─────────────────────────────
 // Platform-wide views of users, stores, webhook events and gateway fees.
 // Consumed by the admin API routes and the admin console UI.
 

@@ -1,4 +1,4 @@
-# AGENTS.md — Store Accountant
+# AGENTS.md — X
 
 Guidance for AI coding agents working in this repository.
 

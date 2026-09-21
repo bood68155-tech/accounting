@@ -1,8 +1,8 @@
 {
-  "name": "store-accountant",
+  "name": "x",
   "version": "0.1.0",
   "private": true,
-  "description": "Store Accountant — Automated AI Accounting & Profitability Engine for E-commerce Stores",
+  "description": "X — Automated AI Accounting & Profitability Engine for E-commerce Stores",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,6 +10,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "db:push": "supabase db push",
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/apply-migrations.mjs",
     "db:seed": "node --env-file-if-exists=.env.local scripts/seed-demo-data.mjs",
     "webhooks:listen": "stripe listen --forward-to localhost:3000/api/webhooks/stripe",
     "test:shopify": "node scripts/run-ts.mjs scripts/verify-shopify-pipeline.ts",
@@ -29,6 +30,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.0",
+    "pg": "^8.23.0",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
