@@ -19,15 +19,64 @@ const PLATFORMS: Array<{ id: Platform; name: string; blurb: string }> = [
 
 const STEP_LABELS = ["Store details", "Webhook endpoint", "Done"];
 
+interface ConnectedStore {
+  id: string;
+  name: string;
+  platform: Platform;
+  domain: string | null;
+  status: string;
+}
+
 export function StoreConnect({ onClose }: { onClose?: () => void }) {
   const [step, setStep] = useState(0);
   const [platform, setPlatform] = useState<Platform>("shopify");
   const [name, setName] = useState("");
   const [domain, setDomain] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [store, setStore] = useState<ConnectedStore | null>(null);
 
-  const webhookUrl = `${typeof window !== "undefined" ? window.location.origin : "https://app.x-accounting.com"}/api/webhooks/${platform}`;
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const webhookUrl = store && origin ? `${origin}/api/webhooks/${store.platform}?store_id=${store.id}` : "";
 
-  const canNext = step === 0 && name.trim().length > 0;
+  const canNext = step === 0 && name.trim().length > 0 && !saving;
+
+  async function saveStore(): Promise<boolean> {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/stores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), platform, domain: domain.trim() }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        store?: ConnectedStore;
+      };
+      if (!res.ok || !data.store) {
+        setError(data.error ?? "Could not connect the store. Please try again.");
+        setSaving(false);
+        return false;
+      }
+      setStore(data.store);
+      setSaving(false);
+      return true;
+    } catch {
+      setError("Network error — please try again.");
+      setSaving(false);
+      return false;
+    }
+  }
+
+  async function handleContinue() {
+    if (step === 0) {
+      const ok = await saveStore();
+      if (ok) setStep(1);
+      return;
+    }
+    setStep(step + 1);
+  }
 
   return (
     <Card className="w-full max-w-lg overflow-hidden">
@@ -108,17 +157,21 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
                 onChange={(e) => setDomain(e.target.value)}
               />
             </div>
+
+            {error && (
+              <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>
+            )}
           </div>
         )}
 
-        {step === 1 && (
+        {step === 1 && store && (
           <div className="space-y-4">
             <div className="flex items-start gap-3 rounded-xl border border-sky-500/25 bg-sky-500/[0.06] p-3.5">
               <IconWebhook className="mt-0.5 h-4.5 w-4.5 shrink-0 text-sky-400" />
               <p className="text-xs leading-relaxed text-sky-200/90">
                 Create a webhook in your {PLATFORMS.find((p) => p.id === platform)?.name} admin and point it at this
-                endpoint. X verifies signatures, computes true profit, and posts journal entries
-                automatically.
+                endpoint (the store id is already included — Shopify sends it back as a query param). Signature
+                verification is handled server-side via <code className="font-mono">SHOPIFY_WEBHOOK_SECRET</code>.
               </p>
             </div>
             <div className="space-y-1.5">
@@ -136,10 +189,10 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
                   Copy
                 </Button>
               </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Webhook secret (optional)</Label>
-              <Input placeholder="e.g. shopify_webhook_secret" />
+              <p className="text-[11px] text-zinc-500">
+                Subscribe to <span className="font-medium text-zinc-300">Order creation</span> (and optionally refunds)
+                for the books to update automatically.
+              </p>
             </div>
           </div>
         )}
@@ -151,7 +204,7 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
             </div>
             <h4 className="mt-4 text-base font-semibold text-zinc-50">Store connected 🎉</h4>
             <p className="mt-1 max-w-xs text-xs leading-relaxed text-zinc-500">
-              <span className="font-medium text-zinc-300">{name || "Your store"}</span> is now syncing. Incoming
+              <span className="font-medium text-zinc-300">{store?.name ?? name}</span> is now syncing. Incoming
               webhooks will be recorded, posted to the general ledger, and appear in your income statement.
             </p>
           </div>
@@ -163,8 +216,8 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
           {step === 0 ? "Cancel" : "Back"}
         </Button>
         {step < 2 ? (
-          <Button type="button" size="sm" disabled={step === 0 && !canNext} onClick={() => setStep(step + 1)}>
-            {step === 0 ? "Continue" : "Finish"}
+          <Button type="button" size="sm" disabled={!canNext} onClick={handleContinue}>
+            {saving ? "Saving…" : step === 0 ? "Continue" : "Finish"}
           </Button>
         ) : (
           <Button type="button" size="sm" onClick={onClose}>

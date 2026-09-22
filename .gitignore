@@ -49,3 +49,7 @@ next-env.d.ts
 
 # local backup copies of removed supabase migrations
 .tmp-backup/
+
+# local temp files
+.tmp-server.log
+.tmp-store-id

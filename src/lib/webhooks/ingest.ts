@@ -48,6 +48,32 @@ async function resolveStoreSchema(storeId: string): Promise<string | null> {
   return rows[0]?.schemaName ?? null;
 }
 
+/**
+ * Find a connected store by its public domain across all tenants (e.g. via the
+ * `X-Shopify-Shop-Domain` header when the webhook URL carries no store id).
+ * Returns the store id and its tenant schema, or null when unknown.
+ */
+export async function resolveStoreByDomain(
+  domain: string,
+): Promise<{ storeId: string; schemaName: string } | null> {
+  if (!isDatabaseConfigured() || !domain) return null;
+  const { tenants } = publicSchema;
+  const tenantRows = await requireDb()
+    .select({ schemaName: tenants.schemaName })
+    .from(tenants);
+  for (const { schemaName } of tenantRows) {
+    if (!isTenantSchema(schemaName)) continue;
+    const t = getTenantTables(schemaName);
+    const rows = await tenantDb(schemaName)
+      .select({ id: t.stores.id })
+      .from(t.stores)
+      .where(eq(t.stores.domain, domain.toLowerCase()))
+      .limit(1);
+    if (rows[0]) return { storeId: rows[0].id, schemaName };
+  }
+  return null;
+}
+
 async function logEvent(
   schema: string | null,
   input: {
