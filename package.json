@@ -12,6 +12,7 @@
     "db:push": "node --env-file-if-exists=.env.local scripts/apply-migrations.mjs",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/apply-migrations.mjs",
     "db:seed": "node --env-file-if-exists=.env.local scripts/seed-demo-data.mjs",
+    "webhooks:replay": "node --env-file-if-exists=.env.local scripts/run-ts.mjs scripts/replay-webhooks.ts",
     "webhooks:listen": "stripe listen --forward-to localhost:3000/api/webhooks/stripe",
     "test:shopify": "node scripts/run-ts.mjs scripts/verify-shopify-pipeline.ts",
     "webhook:simulate": "node --env-file-if-exists=.env.local scripts/simulate-shopify-webhook.mjs"

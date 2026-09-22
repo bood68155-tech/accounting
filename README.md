@@ -78,6 +78,11 @@ To explore with sample data, seed a demo tenant + store:
 npm run db:seed   # creates a demo workspace for SEED_USER_EMAIL (default: the admin email)
 ```
 
+The seed generates **8 months of deterministic history with planted anomalies**
+(refund-rate spike, an order-value outlier, a below-cost sale, orders missing
+COGS, and pending credit-sale orders) so the AI insights, anomaly detection,
+cash-flow forecast and balance sheet have meaningful data on day one.
+
 Sign up with that email first (password ≥ 6 chars), then re-run the seed.
 
 ## 🗄️ Neon setup
@@ -164,6 +169,7 @@ npm run lint        # ESLint
 npm run build       # production build
 npm run db:migrate  # apply db/migrations to DATABASE_URL
 npm run db:seed     # seed a demo tenant + store (requires SEED_USER_EMAIL account)
+npm run webhooks:replay   # replay failed integration events through the real pipeline
 ```
 
 ### 🧪 Testing the Shopify webhook

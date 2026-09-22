@@ -1,10 +1,17 @@
 /**
  * ── Demo data seed (multi-tenant, Neon) ───────────────────────────────────────
  *
- * Provisions a working demo tenant + schema + store with realistic orders,
- * journal entries and webhook events, over a direct Postgres connection.
- * The app talks to Neon via DATABASE_URL, and this script is how you get
- * sample data into a fresh database.
+ * Provisions a working demo tenant + schema + store with ~8 months of
+ * realistic, deterministic orders — including deliberately planted anomalies —
+ * so the AI features (cash-flow forecast, anomaly detection, insights,
+ * balance sheet with AR) have meaningful history to work with:
+ *
+ *   • growth trend across months        → forecast shows a slope
+ *   • a 3-day refund spike (last days)  → anomaly: refund-rate spike
+ *   • one unusually large bulk order    → anomaly: order-value outlier (z>3)
+ *   • one order sold below cost         → anomaly: COGS/pricing misconfig
+ *   • orders with zero item costs       → anomaly: missing COGS
+ *   • a few pending (unpaid) orders     → Accounts Receivable on the balance sheet
  *
  * Requirements (in .env.local):
  *   DATABASE_URL         — Neon (or any Postgres) connection string
@@ -14,8 +21,9 @@
  * Usage:
  *   npm run db:seed
  *
- * The script is idempotent: re-running it will not duplicate the demo store
- * (it upserts by the fixed demo store id / order external ids).
+ * The script is idempotent: it resets only the fixed demo store's data
+ * (orders, journal entries, events) and re-inserts the same deterministic
+ * dataset, so re-running never duplicates anything.
  */
 import pg from "pg";
 
@@ -63,7 +71,10 @@ function daysInMonth(date) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
 }
 
-/** ~6 months of realistic orders (deterministic). */
+/**
+ * ~8 months of realistic orders (deterministic) with a growth trend and
+ * planted anomalies for the AI engines.
+ */
 function generateOrders(storeId) {
   const rand = mulberry32(20260714);
   const orders = [];
@@ -72,50 +83,89 @@ function generateOrders(storeId) {
   const pick = (arr) => arr[Math.floor(rand() * arr.length)];
   const between = (min, max) => min + rand() * (max - min);
 
-  for (let monthOffset = 5; monthOffset >= 0; monthOffset--) {
+  /** How many orders a given month gets — grows toward the present. */
+  const orderCountFor = (monthOffset) =>
+    8 + Math.round((7 - monthOffset) * 1.8) + Math.floor(rand() * 3);
+
+  for (let monthOffset = 7; monthOffset >= 0; monthOffset--) {
     const monthStart = startOfMonth(monthOffset);
     const dim = daysInMonth(monthStart);
-    const orderCount = 8 + Math.floor(rand() * 5);
+    const orderCount = orderCountFor(monthOffset);
 
     for (let i = 0; i < orderCount; i++) {
       orderCounter += 1;
 
-      const lineCount = 1 + Math.floor(rand() * 3);
+      // ── planted anomalies (deterministic, current/previous month only) ────
+      const isCurrentMonth = monthOffset === 0;
+      const isLastMonth = monthOffset === 1;
+
+      // Refund spike: the first 3 orders of the current month land within the
+      // last 3 days and are refunded in full → recent refund-rate spike.
+      const isRefundSpike = isCurrentMonth && i < 3;
+      // Order-value outlier: one huge bulk order in the current month.
+      const isOutlier = isCurrentMonth && i === 3;
+      // Sold below cost: heavy discount on a high-cost product.
+      const isBelowCost = isCurrentMonth && i === 4;
+      // Missing COGS: items arrive with zero unit cost.
+      const isMissingCost = isLastMonth && (i === 0 || i === 1);
+      // Pending (unpaid) orders → booked as credit sales → AR on the balance sheet.
+      const isPending = (isCurrentMonth && i === 5) || (isLastMonth && i === 2);
+
+      const lineCount = isOutlier ? 1 : 1 + Math.floor(rand() * 3);
       const chosen = new Set();
       const items = [];
       for (let l = 0; l < lineCount; l++) {
-        let idx = Math.floor(rand() * CATALOG.length);
-        while (chosen.has(idx)) idx = Math.floor(rand() * CATALOG.length);
+        let idx;
+        if (isOutlier) {
+          idx = 3; // AUR-104 Botanical Gift Box — high ticket
+        } else {
+          idx = Math.floor(rand() * CATALOG.length);
+          while (chosen.has(idx)) idx = Math.floor(rand() * CATALOG.length);
+        }
         chosen.add(idx);
         const product = CATALOG[idx];
-        const quantity = rand() < 0.25 ? 2 : 1;
+        const quantity = isOutlier ? 14 : rand() < 0.25 ? 2 : 1;
+        const unitCost = isMissingCost ? 0 : product.cost; // planted: cost not tracked
         items.push({
           sku: product.sku,
           name: product.name,
           quantity,
           unit_price: product.price,
-          unit_cost: product.cost,
+          unit_cost: unitCost,
           line_subtotal: round2(product.price * quantity),
-          line_cost: round2(product.cost * quantity),
+          line_cost: round2(unitCost * quantity),
         });
       }
 
       const subtotal = round2(items.reduce((s, i) => s + i.line_subtotal, 0));
-      const hasDiscount = rand() < 0.35;
-      const discountAmount = hasDiscount ? round2(subtotal * between(0.05, 0.2)) : 0;
+      let discountRate = rand() < 0.35 ? between(0.05, 0.2) : 0;
+      if (isBelowCost) discountRate = 0.62; // planted: sells below cost
+      const discountAmount = round2(subtotal * discountRate);
       const shippingAmount = round2(between(5.95, 11.95));
       const taxAmount = round2((subtotal - discountAmount) * 0.0725);
       const totalAmount = round2(subtotal - discountAmount + shippingAmount + taxAmount);
-      const paymentFee = round2(totalAmount * 0.029 + 0.3);
+      // Pending orders haven't captured payment yet → no gateway fee.
+      const paymentFee = isPending ? 0 : round2(totalAmount * 0.029 + 0.3);
       const gateway = rand() < 0.7 ? "Shopify Payments" : "PayPal";
 
-      const day = 1 + Math.floor(rand() * dim);
-      const orderedAt = new Date(
-        Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), day, 3 + Math.floor(rand() * 16), Math.floor(rand() * 60)),
-      ).toISOString();
+      let orderedAt;
+      if (isRefundSpike) {
+        // Guarantee the refund cluster sits inside the recent-window that
+        // anomaly detection scans: today minus i days.
+        const d = new Date(Date.now() - i * 86_400_000);
+        d.setUTCHours(3 + Math.floor(rand() * 12), Math.floor(rand() * 60), 0, 0);
+        orderedAt = d.toISOString();
+      } else {
+        const day = 1 + Math.floor(rand() * dim);
+        orderedAt = new Date(
+          Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth(), day, 3 + Math.floor(rand() * 16), Math.floor(rand() * 60)),
+        ).toISOString();
+      }
 
-      const isRefunded = rand() < 0.06;
-      const refundAmount = isRefunded ? round2(totalAmount * (rand() < 0.5 ? 0.5 : 1)) : 0;
+      const isRefunded = isRefundSpike || (!isPending && rand() < 0.06);
+      const refundAmount = isRefunded
+        ? round2(totalAmount * (isRefundSpike ? 1 : rand() < 0.5 ? 0.5 : 1))
+        : 0;
 
       orders.push({
         store_id: storeId,
@@ -132,7 +182,13 @@ function generateOrders(storeId) {
         payment_fee: paymentFee,
         shipping_cost: round2(between(3.2, 6.9)),
         refund_amount: refundAmount,
-        status: refundAmount >= totalAmount ? "refunded" : refundAmount > 0 ? "partially_refunded" : "paid",
+        status: isPending
+          ? "pending"
+          : refundAmount >= totalAmount
+            ? "refunded"
+            : refundAmount > 0
+              ? "partially_refunded"
+              : "paid",
         ordered_at: orderedAt,
         items,
         gateway_provider: gateway === "PayPal" ? "paypal" : "shopify",
@@ -166,6 +222,33 @@ function createSaleEntry(order, entryNumber) {
     entry_number: entryNumber,
     entry_date: order.ordered_at.slice(0, 10),
     description: `Sale ${order.order_number} — ${order.customer_name}`,
+    reference: order.external_id,
+    source: "order",
+    status: "posted",
+    lines,
+  };
+}
+
+function createCreditSaleEntry(order, entryNumber) {
+  const line = (account_code, account_name, account_type, debit, credit, description) => ({
+    account_code, account_name, account_type, debit, credit, description,
+  });
+  // Mirrors createCreditSaleEntry in src/lib/accounting/doubleEntry.ts:
+  // pending orders are booked on credit — Dr Accounts Receivable, not cash.
+  const lines = [];
+  const cogs = round2(order.items.reduce((s, i) => s + i.line_cost, 0));
+  lines.push(line("1100", "Accounts Receivable", "asset", order.total_amount, 0, `Receivable for ${order.order_number}`));
+  if (order.discount_amount > 0) lines.push(line("4400", "Discounts Given", "revenue", order.discount_amount, 0, `Discounts on ${order.order_number}`));
+  lines.push(line("4000", "Sales Revenue", "revenue", 0, order.subtotal, `Product sales ${order.order_number}`));
+  if (order.shipping_amount > 0) lines.push(line("4100", "Shipping Revenue", "revenue", 0, order.shipping_amount, `Shipping charged ${order.order_number}`));
+  if (order.tax_amount > 0) lines.push(line("2100", "Sales Tax Payable", "liability", 0, order.tax_amount, `Sales tax collected ${order.order_number}`));
+  lines.push(line("5000", "Cost of Goods Sold", "expense", cogs, 0, `COGS ${order.order_number} (${order.items.length} line items)`));
+  lines.push(line("1200", "Inventory", "asset", 0, cogs, `Inventory out for ${order.order_number}`));
+  return {
+    store_id: order.store_id,
+    entry_number: entryNumber,
+    entry_date: order.ordered_at.slice(0, 10),
+    description: `Credit sale ${order.order_number} — ${order.customer_name}`,
     reference: order.external_id,
     source: "order",
     status: "posted",
@@ -305,15 +388,20 @@ async function main() {
       );
     }
 
-    // 6. Orders → order_items → journal entries → integration events.
-    const orders = generateOrders(DEMO_STORE_ID);
-
-    // Events: replace per store so re-seeding stays idempotent.
+    // 6. Reset the demo store's transactional data so the deterministic
+    //    dataset (and its entry numbering) is rebuilt cleanly each run.
+    //    Cascades take care of order_items and journal_lines.
     await client.query(`delete from ${T("integration_events")} where store_id = $1`, [DEMO_STORE_ID]);
+    await client.query(`delete from ${T("journal_entries")} where store_id = $1`, [DEMO_STORE_ID]);
+    await client.query(`delete from ${T("orders")} where store_id = $1`, [DEMO_STORE_ID]);
+
+    // 7. Orders → order_items → journal entries → integration events.
+    const orders = generateOrders(DEMO_STORE_ID);
 
     let entryNumber = 0;
     let orderCount = 0;
     let entryCount = 0;
+    let pendingCount = 0;
 
     for (const order of orders) {
       const inserted = await client.query(
@@ -322,14 +410,6 @@ async function main() {
             subtotal, shipping_amount, discount_amount, tax_amount, total_amount,
             payment_gateway, payment_fee, shipping_cost, refund_amount, status, ordered_at)
          values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
-         on conflict (store_id, external_id) do update set
-           customer_name = excluded.customer_name,
-           subtotal = excluded.subtotal, shipping_amount = excluded.shipping_amount,
-           discount_amount = excluded.discount_amount, tax_amount = excluded.tax_amount,
-           total_amount = excluded.total_amount, payment_gateway = excluded.payment_gateway,
-           payment_fee = excluded.payment_fee, shipping_cost = excluded.shipping_cost,
-           refund_amount = excluded.refund_amount, status = excluded.status,
-           ordered_at = excluded.ordered_at
          returning id`,
         [
           order.store_id, order.external_id, order.order_number, order.customer_name, order.currency,
@@ -340,9 +420,8 @@ async function main() {
       );
       const orderId = inserted.rows[0].id;
       orderCount += 1;
+      if (order.status === "pending") pendingCount += 1;
 
-      // Keep items idempotent: replace items for this order rather than upserting.
-      await client.query(`delete from ${T("order_items")} where order_id = $1`, [orderId]);
       for (const item of order.items) {
         await client.query(
           `insert into ${T("order_items")}
@@ -352,10 +431,15 @@ async function main() {
         );
       }
 
-      // Journal entries (sale + refund) + entry_numbers tracking.
+      // Journal entries: pending orders book as credit sales (Dr AR); paid
+      // orders book cash sales; refunds post their reversal entry.
       const entries = [];
       entryNumber += 1;
-      entries.push(createSaleEntry(order, entryNumber));
+      if (order.status === "pending") {
+        entries.push(createCreditSaleEntry(order, entryNumber));
+      } else {
+        entries.push(createSaleEntry(order, entryNumber));
+      }
       if (order.refund_amount > 0) {
         entryNumber += 1;
         entries.push(createRefundEntry(order, order.refund_amount, entryNumber));
@@ -367,9 +451,6 @@ async function main() {
           `insert into ${T("journal_entries")}
              (store_id, entry_number, entry_date, description, reference, source, status)
            values ($1,$2,$3,$4,$5,$6,$7)
-           on conflict (store_id, entry_number) do update set
-             description = excluded.description, entry_date = excluded.entry_date,
-             reference = excluded.reference, status = excluded.status
            returning id`,
           [entry.store_id, entry.entry_number, entry.entry_date, entry.description, entry.reference, entry.source, entry.status],
         );
@@ -377,7 +458,6 @@ async function main() {
         entryCount += 1;
         postedNumbers.push(entry.entry_number);
 
-        await client.query(`delete from ${T("journal_lines")} where entry_id = $1`, [entryId]);
         for (const line of entry.lines) {
           await client.query(
             `insert into ${T("journal_lines")}
@@ -407,12 +487,18 @@ async function main() {
       );
     }
 
+    const monthsCovered = new Set(orders.map((o) => o.ordered_at.slice(0, 7)));
     console.log(`  store:        Aurora & Oak (${DEMO_STORE_ID})`);
     console.log(`  products:     ${CATALOG.length}`);
-    console.log(`  orders:       ${orderCount}`);
+    console.log(`  months:       ${monthsCovered.size}`);
+    console.log(`  orders:       ${orderCount} (${pendingCount} pending → Accounts Receivable)`);
     console.log(`  entries:      ${entryCount}`);
     console.log(`  events:       ${orders.length}`);
-    console.log("\n✅ Demo data seeded. Sign in as the owner to explore the dashboard, ledger and income statement.\n");
+    console.log(
+      `\n✅ Demo data seeded with ${monthsCovered.size} months of history and planted anomalies\n` +
+      `   (refund spike, order outlier, below-cost sale, missing COGS) —\n` +
+      `   sign in as the owner to see the AI insights, forecast and balance sheet light up.\n`,
+    );
   } finally {
     await client.end();
   }
