@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { signIn } from "next-auth/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,22 +25,43 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setMessage(null);
 
     try {
-      const res = await fetch(
-        mode === "signup" ? "/api/auth/signup" : "/api/auth/signin",
-        {
+      // Signup first (creates user + tenant schema), then establish the session
+      // through Auth.js. For login, go straight to the credentials flow.
+      if (mode === "signup") {
+        const signupRes = await fetch("/api/auth/signup", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email, password }),
-        },
-      );
-      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
-
-      if (!res.ok) {
-        setError(data.error ?? "Something went wrong. Please try again.");
-      } else {
-        router.push("/dashboard");
-        router.refresh();
+        });
+        const signupData = (await signupRes.json().catch(() => ({}))) as { error?: string };
+        if (!signupRes.ok) {
+          setError(signupData.error ?? "Could not create the account. Please try again.");
+          setLoading(false);
+          return;
+        }
       }
+
+      // Client-side signIn() resolves the CSRF token from GET /api/auth/csrf
+      // (client-safe) and POSTs the credentials flow — no server-side
+      // getCsrfToken() involved.
+      const result = await signIn("credentials", {
+        email,
+        password,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError(
+          mode === "signup"
+            ? "Account created but sign-in failed — please sign in manually."
+            : "Incorrect email or password.",
+        );
+        setLoading(false);
+        return;
+      }
+
+      router.push("/dashboard");
+      router.refresh();
     } catch {
       setError("Network error — please try again.");
     }

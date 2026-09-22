@@ -46,3 +46,6 @@ next-env.d.ts
 # misc project artifacts
 *.log
 .eslintcache
+
+# local backup copies of removed supabase migrations
+.tmp-backup/
