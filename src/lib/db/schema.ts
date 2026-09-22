@@ -23,6 +23,7 @@ export const platformEnum = pgEnum("platform", [
   "woocommerce",
   "stripe",
   "paypal",
+  "salla",
   "custom",
 ]);
 export const storeStatusEnum = pgEnum("store_status", [

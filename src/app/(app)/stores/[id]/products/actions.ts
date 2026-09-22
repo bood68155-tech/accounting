@@ -12,9 +12,9 @@ import { tenantDb, getTenantTables } from "@/lib/db";
 
 export type ProductFormData = {
   sku: string;
-  name: string;
-  unit_cost: number;
-  unit_price: number;
+  title: string;
+  selling_price: number;
+  cost_price: number;
   external_id?: string;
 };
 
@@ -55,9 +55,9 @@ export async function addProduct(
     await db.insert(t.products).values({
       storeId,
       sku: formData.sku,
-      name: formData.name,
-      unitCost: formData.unit_cost,
-      unitPrice: formData.unit_price,
+      title: formData.title,
+      sellingPrice: formData.selling_price,
+      costPrice: formData.cost_price,
       externalId: formData.external_id ?? null,
     });
 
@@ -86,9 +86,9 @@ export async function updateProduct(
       .update(t.products)
       .set({
         sku: formData.sku,
-        name: formData.name,
-        unitCost: formData.unit_cost,
-        unitPrice: formData.unit_price,
+        title: formData.title,
+        sellingPrice: formData.selling_price,
+        costPrice: formData.cost_price,
         externalId: formData.external_id ?? null,
         updatedAt: new Date(),
       })

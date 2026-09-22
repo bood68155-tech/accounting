@@ -31,6 +31,108 @@ export function verifyShopifyWebhook(
     : { valid: false, reason: "HMAC signature mismatch" };
 }
 
+/** One catalog row extracted from the Shopify Admin API. */
+export interface ShopifyCatalogProduct {
+  external_id: string;
+  sku: string;
+  title: string;
+  selling_price: number;
+  /** Cost from the variant's inventory item; null when Shopify doesn't track it. */
+  cost_price: number | null;
+}
+
+const SHOPIFY_API_VERSION = "2024-10";
+
+/**
+ * Fetch the product catalog from the Shopify Admin REST API.
+ * Token: a custom-app Admin API access token (shpat_…). Variants without a
+ * SKU are skipped — SKU is our catalog key. Unit costs live on inventory
+ * items, so they are fetched in a second batched pass.
+ */
+export async function fetchShopifyProducts(
+  domain: string,
+  token: string,
+): Promise<ShopifyCatalogProduct[]> {
+  const base = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}`;
+  const headers = { "X-Shopify-Access-Token": token };
+
+  type Draft = ShopifyCatalogProduct & { inventoryItemId?: string };
+  const drafts: Draft[] = [];
+
+  let url: string | null = `${base}/products.json?limit=250&status=active`;
+  while (url) {
+    const res: Response = await fetch(url, { headers, cache: "no-store" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Shopify products API ${res.status}: ${body.slice(0, 200)}`);
+    }
+    const data = (await res.json()) as {
+      products?: Array<{
+        id: number;
+        title: string;
+        variants?: Array<{
+          id: number;
+          title?: string;
+          sku?: string | null;
+          price?: string;
+          inventory_item_id?: number;
+        }>;
+      }>;
+    };
+
+    for (const product of data.products ?? []) {
+      for (const variant of product.variants ?? []) {
+        const sku = variant.sku?.trim();
+        if (!sku) continue; // SKU is the catalog key
+        drafts.push({
+          external_id: String(product.id),
+          sku,
+          title:
+            variant.title && variant.title !== "Default Title"
+              ? `${product.title} — ${variant.title}`
+              : product.title,
+          selling_price: Number.parseFloat(variant.price ?? "0") || 0,
+          cost_price: null,
+          inventoryItemId: variant.inventory_item_id
+            ? String(variant.inventory_item_id)
+            : undefined,
+        });
+      }
+    }
+
+    // Follow the Link header for pagination (rel="next").
+    const link: string | null = res.headers.get("link");
+    url = link?.match(/<([^>]+)>; rel="next"/)?.[1] ?? null;
+  }
+
+  // Second pass: unit costs live on inventory items (≤100 ids per call).
+  const itemIds = [
+    ...new Set(drafts.map((d) => d.inventoryItemId).filter((x): x is string => Boolean(x))),
+  ];
+  const costByItemId = new Map<string, number>();
+  for (let i = 0; i < itemIds.length; i += 100) {
+    const chunk = itemIds.slice(i, i + 100);
+    const res = await fetch(`${base}/inventory_items.json?ids=${chunk.join(",")}`, {
+      headers,
+      cache: "no-store",
+    });
+    if (!res.ok) continue; // costs stay null — the user can set them in the UI
+    const data = (await res.json()) as {
+      inventory_items?: Array<{ id: number; cost?: string | null }>;
+    };
+    for (const it of data.inventory_items ?? []) {
+      const cost = Number.parseFloat(it.cost ?? "");
+      if (Number.isFinite(cost)) costByItemId.set(String(it.id), cost);
+    }
+  }
+
+  return drafts.map(({ inventoryItemId, ...row }) => ({
+    ...row,
+    cost_price:
+      (inventoryItemId ? costByItemId.get(inventoryItemId) : undefined) ?? null,
+  }));
+}
+
 interface ShopifyLineItem {
   id?: number;
   sku?: string | null;

@@ -296,11 +296,11 @@ async function main() {
     // 5. Products.
     for (const [i, p] of CATALOG.entries()) {
       await client.query(
-        `insert into ${T("products")} (store_id, external_id, sku, name, unit_cost, unit_price)
+        `insert into ${T("products")} (store_id, external_id, sku, title, cost_price, selling_price)
          values ($1, $2, $3, $4, $5, $6)
          on conflict (store_id, sku) do update set
-           name = excluded.name, unit_cost = excluded.unit_cost,
-           unit_price = excluded.unit_price, updated_at = now()`,
+           title = excluded.title, cost_price = excluded.cost_price,
+           selling_price = excluded.selling_price, updated_at = now()`,
         [DEMO_STORE_ID, `shopify-prod-${1000 + i}`, p.sku, p.name, p.cost, p.price],
       );
     }

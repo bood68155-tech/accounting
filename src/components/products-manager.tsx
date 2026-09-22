@@ -20,9 +20,9 @@ interface ProductsManagerProps {
 
 const EMPTY_FORM: ProductFormData = {
   sku: "",
-  name: "",
-  unit_cost: 0,
-  unit_price: 0,
+  title: "",
+  cost_price: 0,
+  selling_price: 0,
   external_id: "",
 };
 
@@ -37,8 +37,8 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
   const productsWithMargin = useMemo(
     () =>
       products.map((p) => {
-        const margin = p.unit_price > 0 ? (p.unit_price - p.unit_cost) / p.unit_price : 0;
-        const profit = round2(p.unit_price - p.unit_cost);
+        const margin = p.selling_price > 0 ? (p.selling_price - p.cost_price) / p.selling_price : 0;
+        const profit = round2(p.selling_price - p.cost_price);
         return { ...p, margin, profit };
       }),
     [products],
@@ -51,14 +51,14 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
       totalProducts > 0
         ? productsWithMargin.reduce((s, p) => s + p.margin, 0) / totalProducts
         : 0;
-    const totalInventoryValue = products.reduce((s, p) => s + p.unit_cost, 0);
-    const totalPotentialRevenue = products.reduce((s, p) => s + p.unit_price, 0);
+    const totalInventoryValue = products.reduce((s, p) => s + p.cost_price, 0);
+    const totalPotentialRevenue = products.reduce((s, p) => s + p.selling_price, 0);
     return { totalProducts, avgMargin, totalInventoryValue, totalPotentialRevenue };
   }, [products, productsWithMargin]);
 
   function setField(key: keyof ProductFormData) {
     return (e: React.ChangeEvent<HTMLInputElement>) => {
-      const value = key === "sku" || key === "name" || key === "external_id" ? e.target.value : parseFloat(e.target.value) || 0;
+      const value = key === "sku" || key === "title" || key === "external_id" ? e.target.value : parseFloat(e.target.value) || 0;
       setForm((f) => ({ ...f, [key]: value }));
     };
   }
@@ -74,9 +74,9 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
     setEditingId(product.id ?? null);
     setForm({
       sku: product.sku,
-      name: product.name,
-      unit_cost: product.unit_cost,
-      unit_price: product.unit_price,
+      title: product.title,
+      cost_price: product.cost_price,
+      selling_price: product.selling_price,
       external_id: product.external_id ?? "",
     });
     setShowForm(true);
@@ -98,15 +98,15 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
       setError("SKU is required.");
       return;
     }
-    if (!form.name.trim()) {
-      setError("Product name is required.");
+    if (!form.title.trim()) {
+      setError("Product title is required.");
       return;
     }
-    if (form.unit_cost < 0) {
+    if (form.cost_price < 0) {
       setError("Cost price cannot be negative.");
       return;
     }
-    if (form.unit_price <= 0) {
+    if (form.selling_price <= 0) {
       setError("Selling price must be greater than zero.");
       return;
     }
@@ -128,10 +128,10 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
 
   // Preview margin while typing.
   const previewMargin =
-    form.unit_price > 0
-      ? (form.unit_price - form.unit_cost) / form.unit_price
+    form.selling_price > 0
+      ? (form.selling_price - form.cost_price) / form.selling_price
       : 0;
-  const previewProfit = round2(form.unit_price - form.unit_cost);
+  const previewProfit = round2(form.selling_price - form.cost_price);
 
   return (
     <div className="space-y-6">
@@ -195,11 +195,11 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                     />
                   </div>
                   <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
-                    <Label htmlFor="prod-name">Product name</Label>
+                    <Label htmlFor="prod-name">Product title</Label>
                     <Input
                       id="prod-name"
-                      value={form.name}
-                      onChange={setField("name")}
+                      value={form.title}
+                      onChange={setField("title")}
                       placeholder="e.g. Amber + Cedar Candle"
                       required
                     />
@@ -211,8 +211,8 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                       type="number"
                       step="0.01"
                       min="0"
-                      value={form.unit_cost || ""}
-                      onChange={setField("unit_cost")}
+                      value={form.cost_price || ""}
+                      onChange={setField("cost_price")}
                       placeholder="0.00"
                       required
                     />
@@ -224,8 +224,8 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                       type="number"
                       step="0.01"
                       min="0"
-                      value={form.unit_price || ""}
-                      onChange={setField("unit_price")}
+                      value={form.selling_price || ""}
+                      onChange={setField("selling_price")}
                       placeholder="0.00"
                       required
                     />
@@ -249,7 +249,7 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                 </div>
 
                 {/* Margin preview bar */}
-                {form.unit_price > 0 && (
+                {form.selling_price > 0 && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between text-xs text-zinc-500">
                       <span>Margin preview</span>
@@ -268,9 +268,9 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                       />
                     </div>
                     <div className="flex gap-4 text-[11px] text-zinc-600">
-                      <span>Cost: {formatCurrency(form.unit_cost, currency)}</span>
+                      <span>Cost: {formatCurrency(form.cost_price, currency)}</span>
                       <span>→</span>
-                      <span>Sell: {formatCurrency(form.unit_price, currency)}</span>
+                      <span>Sell: {formatCurrency(form.selling_price, currency)}</span>
                       <span>=</span>
                       <span className={previewProfit >= 0 ? "text-emerald-500" : "text-red-500"}>
                         Profit: {formatCurrency(previewProfit, currency)}
@@ -321,16 +321,16 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                 productsWithMargin.map((product) => (
                   <TRow key={product.id ?? product.sku}>
                     <TCell>
-                      <p className="font-medium text-zinc-100">{product.name}</p>
+                      <p className="font-medium text-zinc-100">{product.title}</p>
                     </TCell>
                     <TCell>
                       <Badge variant="neutral">{product.sku}</Badge>
                     </TCell>
                     <TCell className="text-right tabular-nums text-zinc-300">
-                      {formatCurrency(product.unit_cost, currency)}
+                      {formatCurrency(product.cost_price, currency)}
                     </TCell>
                     <TCell className="text-right tabular-nums text-zinc-100 font-medium">
-                      {formatCurrency(product.unit_price, currency)}
+                      {formatCurrency(product.selling_price, currency)}
                     </TCell>
                     <TCell className={`text-right font-medium tabular-nums ${product.profit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
                       {product.profit >= 0 ? "+" : ""}{formatCurrency(product.profit, currency)}
@@ -363,7 +363,7 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                           variant="ghost"
                           className="text-red-400 hover:bg-red-500/10 hover:text-red-300"
                           onClick={async () => {
-                            if (!confirm(`Delete "${product.name}"?`)) return;
+                            if (!confirm(`Delete "${product.title}"?`)) return;
                             const result = await deleteProduct(storeId, product.id ?? "");
                             if (!result.ok) alert(result.error);
                           }}
@@ -401,9 +401,9 @@ export function ProductsManager({ storeId, products, currency }: ProductsManager
                       {i + 1}
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-zinc-100">{product.name}</p>
+                      <p className="truncate text-sm font-medium text-zinc-100">{product.title}</p>
                       <p className="text-[11px] text-zinc-500">
-                        {formatCurrency(product.unit_cost, currency)} → {formatCurrency(product.unit_price, currency)}
+                        {formatCurrency(product.cost_price, currency)} → {formatCurrency(product.selling_price, currency)}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">

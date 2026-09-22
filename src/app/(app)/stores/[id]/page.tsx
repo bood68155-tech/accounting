@@ -29,7 +29,7 @@ export default async function StoreDetailPage({ params }: { params: Promise<{ id
   const avgMargin =
     productCount > 0
       ? data.products.reduce((s, p) => {
-          const margin = p.unit_price > 0 ? (p.unit_price - p.unit_cost) / p.unit_price : 0;
+          const margin = p.selling_price > 0 ? (p.selling_price - p.cost_price) / p.selling_price : 0;
           return s + margin;
         }, 0) / productCount
       : 0;

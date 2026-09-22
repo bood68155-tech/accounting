@@ -149,9 +149,9 @@ export async function fetchStoreOverview(storeId?: string): Promise<StoreOvervie
     store_id: p.storeId,
     external_id: p.externalId,
     sku: p.sku,
-    name: p.name,
-    unit_cost: p.unitCost,
-    unit_price: p.unitPrice,
+    title: p.title,
+    selling_price: p.sellingPrice,
+    cost_price: p.costPrice,
     created_at: p.createdAt.toISOString(),
   }));
 
@@ -194,6 +194,36 @@ export async function fetchStores(): Promise<Store[]> {
     status: s.status,
     config: s.config,
     created_at: s.createdAt.toISOString(),
+  }));
+}
+
+/** All products across every store in the tenant (cost catalog for COGS). */
+export async function fetchAllProducts(): Promise<Array<Product & { store_name: string | null }>> {
+  const schema = await getTenantSchema();
+  if (!schema || !isTenantSchema(schema)) return [];
+
+  const db = tenantDb(schema);
+  const t = getTenantTables(schema);
+
+  const rows = await db
+    .select({
+      product: t.products,
+      storeName: t.stores.name,
+    })
+    .from(t.products)
+    .leftJoin(t.stores, eq(t.stores.id, t.products.storeId))
+    .orderBy(t.products.createdAt);
+
+  return rows.map(({ product, storeName }) => ({
+    id: product.id,
+    store_id: product.storeId,
+    external_id: product.externalId,
+    sku: product.sku,
+    title: product.title,
+    selling_price: product.sellingPrice,
+    cost_price: product.costPrice,
+    created_at: product.createdAt.toISOString(),
+    store_name: storeName ?? null,
   }));
 }
 

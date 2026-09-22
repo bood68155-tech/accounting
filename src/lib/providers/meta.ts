@@ -17,6 +17,14 @@ export const PLATFORM_META: PlatformMeta[] = [
     events: "orders/create · orders/refund",
   },
   {
+    id: "salla",
+    name: "Salla",
+    mark: "\u0633",
+    color: "#1e7f74",
+    blurb: "Saudi e-commerce orders via webhooks; catalog sync via the Salla Admin API.",
+    events: "app.store.authorized \u00b7 order.created",
+  },
+  {
     id: "woocommerce",
     name: "WooCommerce",
     mark: "W",
