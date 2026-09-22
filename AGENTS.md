@@ -17,14 +17,22 @@ Guidance for AI coding agents working in this repository.
   `src/lib/tenants.ts`). There is **no demo mode / demo fallback**; the app always
   talks to Supabase.
 - The accounting engine lives in `src/lib/accounting/`:
-  - `doubleEntry.ts` — `createSaleEntry`, `createRefundEntry`, `createFeeEntry`, `validateEntry`
+  - `doubleEntry.ts` — `createSaleEntry`, `createCreditSaleEntry` (AR), `createPaymentCollectionEntry`, `createRefundEntry`, `createFeeEntry`, `validateEntry`
   - `profitEngine.ts` — `computeOrderProfit`, `computeStats`, `computeMonthlySeries`
   - `incomeStatement.ts` — P&L builders (from orders and from journal entries)
+  - `balanceSheet.ts` — `buildBalanceSheet` (GL-derived, retained earnings close)
   - `chartOfAccounts.ts` — account codes 1000–5900
+- The AI engine lives in `src/lib/ai/`:
+  - `categorizer.ts` — `categorizeTransaction` (rule cascade → account code + confidence), `detectAnomalies` (z-scores, margin floors, refund spikes), `forecastCashFlow` (deterministic trend + momentum)
+  - `insights.ts` — `generateInsights` (grounded NL insights; numbers always reconcile with the ledger)
+  - `agent.ts` — `askFinancialAgent`: tool-using agent (phidata-style); deterministic router by default, optional OpenAI phrasing when `OPENAI_API_KEY` is set — the LLM only rephrases deterministic tool output, it never computes numbers
 - Provider adapters in `src/lib/providers/*` verify signatures and normalize
   payloads to `NormalizedOrder`; webhook routes in `src/app/api/webhooks/*` call
-  `src/lib/webhooks/ingest.ts` (resolve tenant schema → persist → profit → journal
-  entries → event log).
+  `src/lib/webhooks/ingest.ts` (resolve tenant schema → enrich item costs from
+  the catalog → persist → profit → journal entries → event log). Pending orders
+  post credit-sale entries (Dr AR); payment events settle the receivable.
+- Salla webhooks verify `X-Salla-Signature` (HMAC-SHA256 hex of the raw body
+  against `SALLA_WEBHOOK_SECRET`), per docs.salla.dev.
 - **Never** import `src/lib/supabase/admin.ts` (service role) into client code.
 - Every UI change should be validated with `npm run typecheck` and `npm run build`.
 

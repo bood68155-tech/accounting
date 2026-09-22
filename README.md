@@ -19,10 +19,13 @@ on **Neon Postgres**, with tenant scoping enforced in the data layer.
 
 | Area | What it does |
 | --- | --- |
-| **Integrations** | HMAC/Stripe-signature/certificate-verified webhooks for Shopify, WooCommerce, Stripe & PayPal (`/api/webhooks/*`) |
+| **Integrations** | HMAC/Stripe-signature/certificate-verified webhooks for **Salla**, Shopify, WooCommerce, Stripe & PayPal (`/api/webhooks/*`) |
 | **True net profit** | Per-order profit = net sales − COGS (item cost × qty) − gateway fees − shipping cost − refunds (`src/lib/accounting/profitEngine.ts`) |
 | **Double-entry books** | Every sale posts balanced journal entries — Dr Cash, Cr Sales, Dr COGS, Cr Inventory — with a trial balance that always matches (`src/lib/accounting/doubleEntry.ts`) |
-| **Statements** | Income statement (P&L), chart of accounts and journal, generated from the ledger (`src/lib/accounting/incomeStatement.ts`) |
+| **Statements** | Income statement (P&L) **and balance sheet** (with AR/AP and retained earnings), generated from the ledger (`src/lib/accounting/`) |
+| **AR / AP** | Orders that arrive unpaid are booked as credit sales (Dr Accounts Receivable) and settled automatically when a payment event lands (`createCreditSaleEntry` / `createPaymentCollectionEntry`) |
+| **Catalog sync** | Pull products + unit costs from the Shopify Admin API and Salla Admin API (`/products`, `POST /api/products/sync`); catalog costs auto-fill COGS on every incoming order |
+| **AI engine** | Transaction categorization & ledger mapping, statistical anomaly detection, cash-flow forecasting, natural-language insights, and an embedded AI Financial Assistant chat (`src/lib/ai/`) |
 | **Multi-tenant isolation** | Schema-per-tenant: every workspace owns a dedicated Postgres schema; tenant queries are always schema-qualified in the data layer |
 | **Admin console** | Platform-wide `/admin` console aggregating every tenant schema |
 
@@ -40,6 +43,11 @@ tenant_<uuid-hex> schema  (one per workspace, created on signup)
 ├── stores, products, orders, order_items
 ├── ledger_accounts, journal_entries, journal_lines
 └── integration_events
+
+src/lib/ai/                    # AI engine (deterministic core, optional LLM)
+├── categorizer.ts              # tx categorization → ledger mapping, anomalies, forecast
+├── insights.ts                 # grounded natural-language insights
+└── agent.ts                    # embedded financial agent (tools + optional OpenAI)
 ```
 
 - **Provisioning** happens in the signup route: `public.provision_user_tenant()`
@@ -94,6 +102,7 @@ Each provider has a verified endpoint:
 
 | Provider | Endpoint | Verification |
 | --- | --- | --- |
+| Salla | `POST /api/webhooks/salla` | HMAC-SHA256 (`X-Salla-Signature`) |
 | Shopify | `POST /api/webhooks/shopify` | HMAC-SHA256 (`X-Shopify-Hmac-SHA256`) |
 | WooCommerce | `POST /api/webhooks/woocommerce` | HMAC of consumer secret |
 | Stripe | `POST /api/webhooks/stripe` | Timestamped HMAC (`Stripe-Signature`) |

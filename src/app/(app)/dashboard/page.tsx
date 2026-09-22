@@ -10,11 +10,68 @@ import { BarChart } from "@/components/charts/bar-chart";
 import { DonutChart } from "@/components/charts/donut-chart";
 import { ProfitCalculator } from "@/components/profit-calculator";
 import { IconArrowUp, IconCoin, IconOrders, IconSparkles, IconWebhook } from "@/components/icons";
-import { fetchStoreOverview } from "@/lib/data/repository";
+import { fetchStoreOverview, fetchLedger } from "@/lib/data/repository";
+import { generateInsights } from "@/lib/ai/insights";
+import { buildBalanceSheet } from "@/lib/accounting/balanceSheet";
+import { detectAnomalies, forecastCashFlow } from "@/lib/ai/categorizer";
+import { buildIncomeStatementFromOrders } from "@/lib/accounting/incomeStatement";
 import { computeOrderProfit } from "@/lib/accounting/profitEngine";
 import { formatCompactCurrency, formatCurrency, formatPercent, relativeTime } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Dashboard" };
+
+/** Server-side AI panel — deterministic insights over the live ledger. */
+function AiInsightsPanel({
+  storeName,
+  currency,
+  snapshot,
+}: {
+  storeName: string;
+  currency: string;
+  snapshot: Parameters<typeof generateInsights>[0];
+}) {
+  const insights = generateInsights(snapshot);
+  if (insights.length === 0) return null;
+
+  return (
+    <Card>
+      <CardHeader className="flex-row items-center justify-between">
+        <div>
+          <CardTitle className="flex items-center gap-2">
+            <IconSparkles className="h-4.5 w-4.5 text-emerald-400" />
+            AI financial insights
+          </CardTitle>
+          <CardDescription>
+            Generated from your live ledger — ask the{" "}
+            <Link href="/assistant" className="text-emerald-400 hover:text-emerald-300">
+              AI Assistant
+            </Link>{" "}
+            for details
+          </CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 pt-2 md:grid-cols-2">
+        {insights.slice(0, 6).map((insight) => (
+          <div
+            key={insight.title}
+            className={`rounded-xl border p-3.5 ${
+              insight.tone === "positive"
+                ? "border-emerald-500/25 bg-emerald-500/[0.05]"
+                : insight.tone === "warning"
+                  ? "border-amber-500/25 bg-amber-500/[0.05]"
+                  : "border-zinc-800 bg-zinc-900/40"
+            }`}
+          >
+            <p className="text-sm font-medium text-zinc-100">{insight.title}</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-400">{insight.body}</p>
+          </div>
+        ))}
+      </CardContent>
+      <p className="px-6 pb-4 text-[11px] text-zinc-600">
+        Currency {currency} · Store {storeName} · Numbers reconcile 1:1 with the general ledger
+      </p>
+    </Card>
+  );}
 
 export default async function DashboardPage() {
   const data = await fetchStoreOverview();
@@ -54,6 +111,19 @@ export default async function DashboardPage() {
   const recentOrders = [...orders].sort((a, b) => b.ordered_at.localeCompare(a.ordered_at)).slice(0, 7);
   const revenueSpark = monthly.map((m) => m.revenue);
   const profitSpark = monthly.map((m) => m.net_profit);
+  const ledgerEntries = await fetchLedger(store.id);
+  const aiSnapshot = {
+    stats,
+    incomeStatement: buildIncomeStatementFromOrders(orders),
+    balanceSheet: buildBalanceSheet(ledgerEntries),
+    monthly,
+    orders,
+    journalEntries: ledgerEntries,
+    forecast: forecastCashFlow(orders),
+    anomalies: detectAnomalies(orders),
+    storeName: store.name,
+    currency,
+  };
 
   const allocation = [
     { label: "Net profit", value: stats.total_net_profit, color: "#34d399" },
@@ -209,6 +279,9 @@ export default async function DashboardPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* AI insights */}
+        <AiInsightsPanel storeName={store.name} currency={currency} snapshot={aiSnapshot} />
 
         {/* Profit calculator */}
         <div>
