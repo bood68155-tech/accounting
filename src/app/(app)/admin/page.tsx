@@ -24,7 +24,7 @@ import { Table, TBody, TCell, THead, THeadCell, TRow } from "@/components/ui/tab
 import { isAdminEmail } from "@/lib/admin/auth";
 import { ADMIN_PIN_COOKIE, pinTokenMatches } from "@/lib/admin/pin";
 import { fetchAdminData } from "@/lib/admin/queries";
-import { createClient } from "@/lib/supabase/server";
+import { auth } from "@/lib/auth";
 import { cn, formatCompactCurrency, formatNumber, formatPercent, relativeTime } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Admin console" };
@@ -54,12 +54,9 @@ const SUBSCRIPTION_LABEL: Record<string, string> = {
 export default async function AdminPage() {
   // ─── Email gate ─────────────────────────────────────────────────────────────
   // Strict guard: only the platform owner (bood68155@gmail.com) can access.
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-  if (!isAdminEmail(user.email)) redirect("/dashboard");
+  const session = await auth();
+  if (!session?.user) redirect("/login");
+  if (!isAdminEmail(session.user.email)) redirect("/dashboard");
 
   // ─── PIN gate ───────────────────────────────────────────────────────────────
   // The cookie is httpOnly, holds an HMAC token keyed by the PIN (unforgeable

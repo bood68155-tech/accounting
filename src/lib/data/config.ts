@@ -1,8 +1,6 @@
-import { supabasePublishableKey } from "@/lib/supabase/env";
+import { isDatabaseConfigured } from "@/lib/db";
 
-/** True when the app has working Supabase credentials in the environment. */
-export function isSupabaseConfigured(): boolean {
-  return Boolean(
-    process.env.NEXT_PUBLIC_SUPABASE_URL && supabasePublishableKey,
-  );
+/** True when the app has a working Neon connection string in the environment. */
+export function isDatabaseConfiguredPublic(): boolean {
+  return isDatabaseConfigured();
 }

@@ -1,4 +1,12 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+import { desc } from "drizzle-orm";
+import {
+  isDatabaseConfigured,
+  isTenantSchema,
+  requireDb,
+  publicSchema,
+  tenantDb,
+  getTenantTables,
+} from "@/lib/db";
 import {
   aggregateAdminData,
   summarizeEvents,
@@ -19,52 +27,53 @@ import type {
 } from "@/lib/admin/types";
 
 // ─── Admin repository ─────────────────────────────────────────────────────────
-// The admin console spans every tenant. It reads shared metadata (auth users,
-// profiles, tenants) from the `public` schema and then aggregates each tenant's
-// stores/orders/products/events from its own schema via the service role
-// (which bypasses RLS — this module is server-only).
+// The admin console spans every tenant. It reads shared metadata (users,
+// profiles, tenants) from the `public` schema and then aggregates each
+// tenant's stores/orders/products/events from its own schema (this module is
+// server-only; tenant scoping is enforced by schema-qualified Drizzle tables).
 
-interface TenantRow {
-  id: string;
-  schema_name: string | null;
-}
-
-async function fetchTenants(): Promise<TenantRow[]> {
-  const { data, error } = await createAdminClient()
-    .from("tenants")
-    .select("id, schema_name");
-  if (error) throw new Error(error.message);
-  return (data ?? []) as TenantRow[];
+function toIso(value: Date | string | null): string {
+  return value instanceof Date ? value.toISOString() : String(value);
 }
 
 export async function fetchAdminData(): Promise<AdminData> {
-  const supabase = createAdminClient();
+  if (!isDatabaseConfigured()) {
+    throw new Error("DATABASE_URL is not configured.");
+  }
 
-  const { data: usersPage, error: usersError } = await supabase.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-  if (usersError) throw new Error(usersError.message);
+  const db = requireDb();
+  const { users, profiles, tenants } = publicSchema;
 
-  const { data: profiles, error: profilesError } = await supabase
-    .from("profiles")
-    .select("id, full_name, avatar_url");
-  if (profilesError) throw new Error(profilesError.message);
+  const userRows = await db
+    .select({
+      id: users.id,
+      email: users.email,
+      createdAt: users.createdAt,
+      lastLoginAt: users.lastLoginAt,
+      disabled: users.disabled,
+    })
+    .from(users)
+    .orderBy(users.createdAt);
+  const profileRows = await db
+    .select({ id: profiles.id, fullName: profiles.fullName, avatarUrl: profiles.avatarUrl })
+    .from(profiles);
+  const tenantRows = await db
+    .select({ id: tenants.id, schemaName: tenants.schemaName })
+    .from(tenants);
 
-  const tenants = await fetchTenants();
-
-  const users: RawUser[] = (usersPage?.users ?? []).map((u) => ({
+  const mappedUsers: RawUser[] = userRows.map((u) => ({
     id: u.id,
-    email: u.email ?? "",
-    created_at: u.created_at ?? new Date().toISOString(),
-    last_sign_in_at: u.last_sign_in_at ?? null,
-    banned_until: u.banned_until ?? null,
+    email: u.email,
+    created_at: toIso(u.createdAt),
+    last_sign_in_at: u.lastLoginAt ? toIso(u.lastLoginAt) : null,
+    // Reuse the existing "banned" concept: disabled accounts are flagged as banned.
+    banned_until: u.disabled ? "9999-12-31T23:59:59Z" : null,
   }));
 
-  const rawProfiles: RawProfile[] = (profiles ?? []).map((row) => ({
+  const rawProfiles: RawProfile[] = profileRows.map((row) => ({
     id: row.id,
-    full_name: row.full_name,
-    avatar_url: row.avatar_url,
+    full_name: row.fullName ?? null,
+    avatar_url: row.avatarUrl ?? null,
   }));
 
   const stores: RawStore[] = [];
@@ -72,46 +81,91 @@ export async function fetchAdminData(): Promise<AdminData> {
   const products: RawProduct[] = [];
   const events: RawEvent[] = [];
 
-  // Aggregate each tenant's schema with a dedicated service-role client.
-  for (const tenant of tenants) {
-    if (!tenant.schema_name) continue;
-    const tenantDb = createAdminClient(tenant.schema_name);
+  // Aggregate each tenant's schema.
+  for (const tenant of tenantRows) {
+    const schema = tenant.schemaName;
+    if (!schema || !isTenantSchema(schema)) continue;
 
-    const [storesRes, productsRes, ordersRes, eventsRes] = await Promise.all([
-      tenantDb.from("stores").select("id, user_id, name, platform, domain, currency, status, created_at"),
-      tenantDb.from("products").select("id, store_id"),
-      tenantDb
-        .from("orders")
-        .select("store_id, payment_gateway, total_amount, refund_amount, payment_fee, ordered_at"),
-      tenantDb
-        .from("integration_events")
-        .select("id, store_id, provider, event_type, status, error, processed_at")
-        .order("processed_at", { ascending: false })
+    const t = getTenantTables(schema);
+    const tdb = tenantDb(schema);
+
+    const [tenantStores, tenantProducts, tenantOrders, tenantEvents] = await Promise.all([
+      tdb
+        .select({
+          id: t.stores.id,
+          userId: t.stores.userId,
+          name: t.stores.name,
+          platform: t.stores.platform,
+          domain: t.stores.domain,
+          currency: t.stores.currency,
+          status: t.stores.status,
+          createdAt: t.stores.createdAt,
+        })
+        .from(t.stores),
+      tdb.select({ id: t.products.id, storeId: t.products.storeId }).from(t.products),
+      tdb
+        .select({
+          storeId: t.orders.storeId,
+          paymentGateway: t.orders.paymentGateway,
+          totalAmount: t.orders.totalAmount,
+          refundAmount: t.orders.refundAmount,
+          paymentFee: t.orders.paymentFee,
+          orderedAt: t.orders.orderedAt,
+        })
+        .from(t.orders),
+      tdb
+        .select({
+          id: t.integrationEvents.id,
+          storeId: t.integrationEvents.storeId,
+          provider: t.integrationEvents.provider,
+          eventType: t.integrationEvents.eventType,
+          status: t.integrationEvents.status,
+          error: t.integrationEvents.error,
+          processedAt: t.integrationEvents.processedAt,
+        })
+        .from(t.integrationEvents)
+        .orderBy(desc(t.integrationEvents.processedAt))
         .limit(500),
     ]);
 
-    if (storesRes.error) throw new Error(storesRes.error.message);
-    if (productsRes.error) throw new Error(productsRes.error.message);
-    if (ordersRes.error) throw new Error(ordersRes.error.message);
-    if (eventsRes.error) throw new Error(eventsRes.error.message);
-
-    stores.push(...((storesRes.data ?? []) as RawStore[]));
-    products.push(...((productsRes.data ?? []) as RawProduct[]));
-    orders.push(
-      ...((ordersRes.data ?? []) as unknown as RawOrder[]).map((row) => ({
-        store_id: row.store_id,
-        payment_gateway: row.payment_gateway,
-        total_amount: Number(row.total_amount),
-        refund_amount: Number(row.refund_amount),
-        payment_fee: Number(row.payment_fee),
-        ordered_at: row.ordered_at,
+    stores.push(
+      ...tenantStores.map((s) => ({
+        id: s.id,
+        user_id: s.userId,
+        name: s.name,
+        platform: s.platform,
+        domain: s.domain,
+        currency: s.currency,
+        status: s.status,
+        created_at: toIso(s.createdAt),
       })),
     );
-    events.push(...((eventsRes.data ?? []) as RawEvent[]));
+    products.push(...tenantProducts.map((p) => ({ id: p.id, store_id: p.storeId })));
+    orders.push(
+      ...tenantOrders.map((row) => ({
+        store_id: row.storeId,
+        payment_gateway: row.paymentGateway,
+        total_amount: row.totalAmount,
+        refund_amount: row.refundAmount,
+        payment_fee: row.paymentFee,
+        ordered_at: toIso(row.orderedAt),
+      })),
+    );
+    events.push(
+      ...tenantEvents.map((row) => ({
+        id: row.id,
+        store_id: row.storeId,
+        provider: row.provider,
+        event_type: row.eventType,
+        status: row.status,
+        error: row.error ?? null,
+        processed_at: toIso(row.processedAt),
+      })),
+    );
   }
 
   return aggregateAdminData({
-    users,
+    users: mappedUsers,
     profiles: rawProfiles,
     stores,
     orders,

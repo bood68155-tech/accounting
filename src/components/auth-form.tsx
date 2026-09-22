@@ -8,8 +8,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/logo";
-import { isSupabaseConfigured } from "@/lib/data/config";
-import { createClient } from "@/lib/supabase/client";
 
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const router = useRouter();
@@ -21,24 +19,29 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!isSupabaseConfigured()) {
-      setError("Supabase is not configured. Add NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or legacy NEXT_PUBLIC_SUPABASE_ANON_KEY) to .env.local to enable authentication.");
-      return;
-    }
     setLoading(true);
     setError(null);
     setMessage(null);
 
-    const supabase = createClient();
-    if (mode === "signup") {
-      const { data, error } = await supabase.auth.signUp({ email, password });
-      if (error) setError(error.message);
-      else if (data.user && !data.session) setMessage("Check your inbox to confirm your email, then sign in.");
-      else router.push("/dashboard");
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) setError(error.message);
-      else router.push("/dashboard");
+    try {
+      const res = await fetch(
+        mode === "signup" ? "/api/auth/signup" : "/api/auth/signin",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password }),
+        },
+      );
+      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+
+      if (!res.ok) {
+        setError(data.error ?? "Something went wrong. Please try again.");
+      } else {
+        router.push("/dashboard");
+        router.refresh();
+      }
+    } catch {
+      setError("Network error — please try again.");
     }
     setLoading(false);
   }
@@ -96,7 +99,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         </Card>
 
         <p className="mt-6 text-center text-[11px] text-zinc-600">
-          Secured by Supabase Auth with Row Level Security
+          Secured by encrypted credentials and tenant-isolated data
         </p>
       </div>
     </div>

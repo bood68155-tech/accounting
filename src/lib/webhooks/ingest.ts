@@ -1,20 +1,30 @@
+import { randomUUID } from "node:crypto";
+import { and, eq, desc } from "drizzle-orm";
 import type { JournalEntry, Order, ProfitBreakdown } from "@/types";
 import { toOrder, type NormalizedOrder, type NormalizedPayment } from "@/lib/providers/types";
 import { computeOrderProfit } from "@/lib/accounting/profitEngine";
 import { createFeeEntry, createRefundEntry, createSaleEntry } from "@/lib/accounting/doubleEntry";
-import { hasAdminCredentials, createAdminClient } from "@/lib/supabase/admin";
+import {
+  isDatabaseConfigured,
+  isTenantSchema,
+  requireDb,
+  publicSchema,
+  tenantDb,
+  getTenantTables,
+} from "@/lib/db";
 
 /**
- * ── Webhook ingestion pipeline ────────────────────────────────────────────────
+ * ── Webhook ingestion pipeline (Neon + Drizzle) ───────────────────────────────
  * 1. Verify signature (in the route)
  * 2. Normalize payload → canonical order/payment
  * 3. Resolve the tenant schema via public.store_registry
- * 4. Persist order + items (service-role, inside the tenant schema)
+ * 4. Persist order + items inside the tenant schema (atomic batch)
  * 5. Compute true net profit
  * 6. Post balanced double-entry journal entries
  * 7. Log the integration event
  *
- * All writes happen in the store's tenant schema — schema-per-tenant isolation.
+ * All writes go through the schema-qualified Drizzle tables (schema-per-tenant
+ * isolation); every value is a bound parameter.
  */
 
 export interface IngestResult {
@@ -28,14 +38,14 @@ export interface IngestResult {
 
 /** Find the tenant schema that owns a store (via the shared registry). */
 async function resolveStoreSchema(storeId: string): Promise<string | null> {
-  if (!hasAdminCredentials()) return null;
-  const { data, error } = await createAdminClient()
-    .from("store_registry")
-    .select("schema_name")
-    .eq("store_id", storeId)
-    .maybeSingle();
-  if (error || !data) return null;
-  return data.schema_name ?? null;
+  if (!isDatabaseConfigured()) return null;
+  const { storeRegistry } = publicSchema;
+  const rows = await requireDb()
+    .select({ schemaName: storeRegistry.schemaName })
+    .from(storeRegistry)
+    .where(eq(storeRegistry.storeId, storeId))
+    .limit(1);
+  return rows[0]?.schemaName ?? null;
 }
 
 async function logEvent(
@@ -49,16 +59,16 @@ async function logEvent(
     error?: string;
   },
 ) {
-  if (!schema || !hasAdminCredentials()) return;
+  if (!schema || !isDatabaseConfigured()) return;
   try {
-    await createAdminClient(schema).from("integration_events").insert({
-      store_id: input.storeId,
+    const t = getTenantTables(schema);
+    await tenantDb(schema).insert(t.integrationEvents).values({
+      storeId: input.storeId,
       provider: input.provider,
-      event_type: input.eventType,
+      eventType: input.eventType,
       payload: input.payload,
       status: input.status,
       error: input.error ?? null,
-      processed_at: new Date().toISOString(),
     });
   } catch {
     // Logging must never break the webhook response.
@@ -70,103 +80,108 @@ async function persistOrder(
   order: Order,
   rawPayload?: Record<string, unknown>,
 ) {
-  const supabase = createAdminClient(schema);
-  const { data: existing } = await supabase
-    .from("orders")
-    .select("id, entry_numbers")
-    .eq("store_id", order.store_id)
-    .eq("external_id", order.external_id)
-    .maybeSingle();
+  const db = tenantDb(schema);
+  const t = getTenantTables(schema);
 
-  if (existing) return { upserted: false, entryNumbers: (existing.entry_numbers ?? []) as number[] };
-
-  const { data: inserted, error } = await supabase
-    .from("orders")
-    .insert({
-      store_id: order.store_id,
-      external_id: order.external_id,
-      order_number: order.order_number,
-      customer_name: order.customer_name,
-      currency: order.currency,
-      subtotal: order.subtotal,
-      shipping_amount: order.shipping_amount,
-      discount_amount: order.discount_amount,
-      tax_amount: order.tax_amount,
-      total_amount: order.total_amount,
-      payment_gateway: order.payment_gateway,
-      payment_fee: order.payment_fee,
-      shipping_cost: order.shipping_cost,
-      refund_amount: order.refund_amount,
-      status: order.status,
-      ordered_at: order.ordered_at,
-      raw: rawPayload ?? null,
-    })
-    .select("id")
-    .single();
-
-  if (error) throw new Error(`Failed to insert order: ${error.message}`);
-
-  if (order.items.length > 0) {
-    const { error: itemsError } = await supabase.from("order_items").insert(
-      order.items.map((item) => ({
-        order_id: inserted.id,
-        sku: item.sku,
-        name: item.name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        unit_cost: item.unit_cost,
-        line_subtotal: item.line_subtotal,
-        line_cost: item.line_cost,
-      })),
-    );
-    if (itemsError) throw new Error(`Failed to insert order items: ${itemsError.message}`);
+  const existing = await db
+    .select({ id: t.orders.id, entryNumbers: t.orders.entryNumbers })
+    .from(t.orders)
+    .where(and(eq(t.orders.storeId, order.store_id), eq(t.orders.externalId, order.external_id)))
+    .limit(1);
+  if (existing.length > 0) {
+    return { upserted: false, entryNumbers: existing[0].entryNumbers ?? [] };
   }
+
+  // The order id is generated up front so the order + item inserts can run as
+  // one atomic Neon HTTP batch (no statement depends on another's result).
+  const orderId = randomUUID();
+  await db.batch(
+    [
+      db.insert(t.orders).values({
+        id: orderId,
+        storeId: order.store_id,
+        externalId: order.external_id,
+        orderNumber: order.order_number,
+        customerName: order.customer_name,
+        currency: order.currency,
+        subtotal: order.subtotal,
+        shippingAmount: order.shipping_amount,
+        discountAmount: order.discount_amount,
+        taxAmount: order.tax_amount,
+        totalAmount: order.total_amount,
+        paymentGateway: order.payment_gateway,
+        paymentFee: order.payment_fee,
+        shippingCost: order.shipping_cost,
+        refundAmount: order.refund_amount,
+        status: order.status,
+        orderedAt: new Date(order.ordered_at),
+        raw: rawPayload ?? null,
+      }),
+      ...order.items.map((item) =>
+        db.insert(t.orderItems).values({
+          orderId,
+          sku: item.sku,
+          name: item.name,
+          quantity: item.quantity,
+          unitPrice: item.unit_price,
+          unitCost: item.unit_cost,
+          lineSubtotal: item.line_subtotal,
+          lineCost: item.line_cost,
+        }),
+      ),
+    ] as never,
+  );
 
   return { upserted: true, entryNumbers: [] as number[] };
 }
 
 async function persistEntries(schema: string, entries: JournalEntry[]) {
-  if (entries.length === 0 || !hasAdminCredentials()) return;
-  const supabase = createAdminClient(schema);
-  for (const entry of entries) {
-    const { data: inserted, error } = await supabase
-      .from("journal_entries")
-      .insert({
-        store_id: entry.store_id,
-        entry_number: entry.entry_number,
-        entry_date: entry.entry_date,
-        description: entry.description,
-        reference: entry.reference,
-        source: entry.source,
-        status: entry.status,
-      })
-      .select("id")
-      .single();
-    if (error) throw new Error(`Failed to insert journal entry: ${error.message}`);
+  if (entries.length === 0) return;
+  const db = tenantDb(schema);
+  const t = getTenantTables(schema);
 
-    const { error: linesError } = await supabase.from("journal_lines").insert(
-      entry.lines.map((line) => ({
-        entry_id: inserted.id,
-        account_code: line.account_code,
-        account_name: line.account_name,
-        account_type: line.account_type,
-        description: line.description,
-        debit: line.debit,
-        credit: line.credit,
-      })),
+  for (const entry of entries) {
+    const entryId = randomUUID();
+    await db.batch(
+      [
+        db.insert(t.journalEntries).values({
+          id: entryId,
+          storeId: entry.store_id,
+          entryNumber: entry.entry_number,
+          entryDate: entry.entry_date,
+          description: entry.description,
+          reference: entry.reference,
+          source: entry.source,
+          status: entry.status,
+        }),
+        ...entry.lines.map((line) =>
+          db.insert(t.journalLines).values({
+            entryId,
+            accountCode: line.account_code,
+            accountName: line.account_name,
+            accountType: line.account_type,
+            description: line.description,
+            debit: line.debit,
+            credit: line.credit,
+          }),
+        ),
+      ] as never,
     );
-    if (linesError) throw new Error(`Failed to insert journal lines: ${linesError.message}`);
   }
 }
 
-async function postEntriesForOrder(schema: string, order: Order): Promise<number[]> {
-  const { data: next } = await createAdminClient(schema)
-    .from("journal_entries")
-    .select("entry_number")
-    .order("entry_number", { ascending: false })
+async function nextEntryNumber(schema: string): Promise<number> {
+  const t = getTenantTables(schema);
+  const rows = await tenantDb(schema)
+    .select({ entryNumber: t.journalEntries.entryNumber })
+    .from(t.journalEntries)
+    .orderBy(desc(t.journalEntries.entryNumber))
     .limit(1);
-  let entryNumber = (next?.[0]?.entry_number ?? 0) + 1;
+  return (rows[0]?.entryNumber ?? 0) + 1;
+}
 
+async function postEntriesForOrder(schema: string, order: Order): Promise<number[]> {
+  let entryNumber = await nextEntryNumber(schema);
   const entries: JournalEntry[] = [createSaleEntry(order, entryNumber)];
   if (order.refund_amount > 0) {
     entryNumber += 1;
@@ -174,17 +189,16 @@ async function postEntriesForOrder(schema: string, order: Order): Promise<number
   }
   await persistEntries(schema, entries);
 
-  // Track posted entry numbers on the order row.
   const numbers = entries.map((e) => e.entry_number);
-  await createAdminClient(schema)
-    .from("orders")
-    .update({ entry_numbers: numbers })
-    .eq("store_id", order.store_id)
-    .eq("external_id", order.external_id);
+  const t = getTenantTables(schema);
+  await tenantDb(schema)
+    .update(t.orders)
+    .set({ entryNumbers: numbers })
+    .where(and(eq(t.orders.storeId, order.store_id), eq(t.orders.externalId, order.external_id)));
   return numbers;
 }
 
-/** Process a normalized order from a store webhook. */
+/** Process a normalized order webhook. */
 export async function processOrderWebhook(input: {
   provider: string;
   storeId: string;
@@ -196,19 +210,19 @@ export async function processOrderWebhook(input: {
   const order = toOrder(input.normalized, input.storeId, input.storeCurrency);
   const profit = computeOrderProfit(order);
 
-  if (!hasAdminCredentials()) {
+  if (!isDatabaseConfigured()) {
     return {
       ok: true,
       eventType: input.eventType,
       order,
       profit,
-      message: `Order ${order.order_number} computed — true net profit ${profit.net_profit.toFixed(2)}. Not persisted: set SUPABASE_SERVICE_ROLE_KEY to enable live ingestion.`,
+      message: `Order ${order.order_number} computed — true net profit ${profit.net_profit.toFixed(2)}. Not persisted: set DATABASE_URL to enable live ingestion.`,
     };
   }
 
   try {
     const schema = await resolveStoreSchema(input.storeId);
-    if (!schema) {
+    if (!schema || !isTenantSchema(schema)) {
       return {
         ok: false,
         eventType: input.eventType,
@@ -267,17 +281,17 @@ export async function processPaymentWebhook(input: {
 }): Promise<IngestResult> {
   const message = `Payment ${input.payment.external_id} — gateway fee ${input.payment.fee.toFixed(2)} (${input.payment.amount.toFixed(2)} charged, ${input.payment.net.toFixed(2)} net).`;
 
-  if (!hasAdminCredentials()) {
+  if (!isDatabaseConfigured()) {
     return {
       ok: true,
       eventType: input.eventType,
-      message: `Computed — not persisted: set SUPABASE_SERVICE_ROLE_KEY to enable live ingestion. ${message}`,
+      message: `Computed — not persisted: set DATABASE_URL to enable live ingestion. ${message}`,
     };
   }
 
   try {
     const schema = await resolveStoreSchema(input.storeId);
-    if (!schema) {
+    if (!schema || !isTenantSchema(schema)) {
       return {
         ok: false,
         eventType: input.eventType,
@@ -286,12 +300,7 @@ export async function processPaymentWebhook(input: {
     }
 
     if (input.payment.fee > 0) {
-      const { data: next } = await createAdminClient(schema)
-        .from("journal_entries")
-        .select("entry_number")
-        .order("entry_number", { ascending: false })
-        .limit(1);
-      const entryNumber = (next?.[0]?.entry_number ?? 0) + 1;
+      const entryNumber = await nextEntryNumber(schema);
       await persistEntries(schema, [
         createFeeEntry(
           input.storeId,

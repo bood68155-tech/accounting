@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { auth } from "@/lib/auth";
 
 // ─── Admin authorization ──────────────────────────────────────────────────────
 // Strict guard: ONLY the platform owner can access the admin console.
@@ -38,15 +38,12 @@ export type AdminAccess =
 
 /** Guard used by admin API routes and the admin page. */
 export async function requireAdminAccess(): Promise<AdminAccess> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const session = await auth();
 
-  if (!user?.email) {
+  if (!session?.user?.email) {
     return { granted: false, status: 401, message: "Sign in to access the admin console." };
   }
-  if (!isAdminEmail(user.email)) {
+  if (!isAdminEmail(session.user.email)) {
     return { granted: false, status: 403, message: "Your account is not an administrator." };
   }
   return { granted: true };

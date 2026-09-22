@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 import { Logo } from "@/components/logo";
 import {
   IconDashboard,
@@ -45,6 +46,7 @@ const NAV = [
 
 export function Sidebar({ tenantName }: { tenantName: string }) {
   const pathname = usePathname();
+  const router = useRouter();
 
   const isActive = (href: string) =>
     href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
@@ -103,6 +105,16 @@ export function Sidebar({ tenantName }: { tenantName: string }) {
             <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
               Live sync
             </span>
+            <button
+              type="button"
+              onClick={() => signOut({ redirect: false }).then(() => {
+                router.push("/login");
+                router.refresh();
+              })}
+              className="ml-auto text-[10px] font-medium text-zinc-500 transition-colors hover:text-red-400"
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </div>

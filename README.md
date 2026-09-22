@@ -6,11 +6,12 @@ X connects to online stores via webhooks/APIs, computes **true net profit**
 (item cost, shipping and payment-gateway fees), automates **double-entry bookkeeping**
 (general ledger & COGS), and produces **financial statements** (income statement). It is
 **multi-tenant**: every workspace gets its own Postgres schema (schema-per-tenant isolation)
-with Row Level Security, so tenants can never see each other's data.
+on **Neon Postgres**, with tenant scoping enforced in the data layer.
 
 ![stack](https://img.shields.io/badge/Next.js%2016-TypeScript-000000?logo=next.js)
 ![stack](https://img.shields.io/badge/Tailwind%20CSS%20v4-dark?logo=tailwindcss)
-![stack](https://img.shields.io/badge/Supabase-RLS-3FCF8E?logo=supabase)
+![stack](https://img.shields.io/badge/Neon%20Postgres-00E599?logo=neon)
+![stack](https://img.shields.io/badge/Auth-NextAuth%20v5-000000?logo=nextdotorg)
 
 ---
 
@@ -22,71 +23,70 @@ with Row Level Security, so tenants can never see each other's data.
 | **True net profit** | Per-order profit = net sales − COGS (item cost × qty) − gateway fees − shipping cost − refunds (`src/lib/accounting/profitEngine.ts`) |
 | **Double-entry books** | Every sale posts balanced journal entries — Dr Cash, Cr Sales, Dr COGS, Cr Inventory — with a trial balance that always matches (`src/lib/accounting/doubleEntry.ts`) |
 | **Statements** | Income statement (P&L), chart of accounts and journal, generated from the ledger (`src/lib/accounting/incomeStatement.ts`) |
-| **Multi-tenant isolation** | Schema-per-tenant: every workspace owns a dedicated Postgres schema with RLS; the shared `public` schema holds only tenant metadata |
-| **Admin console** | Platform-wide `/admin` console (service-role) aggregating every tenant schema |
+| **Multi-tenant isolation** | Schema-per-tenant: every workspace owns a dedicated Postgres schema; tenant queries are always schema-qualified in the data layer |
+| **Admin console** | Platform-wide `/admin` console aggregating every tenant schema |
 
 ## 🧱 Multi-tenant architecture (schema-per-tenant)
 
 ```
 public schema  (shared metadata only)
+├── users            bcrypt credentials (NextAuth), disabled flag
+├── profiles         id, full_name, avatar_url
 ├── tenants          id, owner_id, name, slug, schema_name
-├── tenant_users     tenant_id, user_id, role          ← RLS: users see their own rows
-└── store_registry   store_id → tenant schema           ← service-role only
+├── tenant_users     tenant_id, user_id, role
+└── store_registry   store_id → tenant schema
 
 tenant_<uuid-hex> schema  (one per workspace, created on signup)
 ├── stores, products, orders, order_items
 ├── ledger_accounts, journal_entries, journal_lines
 └── integration_events
-    RLS: membership in public.tenant_users for this tenant
 ```
 
-- **Provisioning** is automatic: `public.handle_new_user()` (trigger on `auth.users`)
-  creates the tenant, membership row and calls `public.create_tenant_schema()`
-  (security-definer DDL owned by postgres, executable by the service role only).
-- **Routing** happens in middleware: after login it resolves the user's tenant and
-  stores `tenant-id` / `tenant-schema` cookies. Every page, server action and webhook
-  scopes its queries to that schema (`createClient(schema)` → `db.schema`).
-- **Webhooks & admin** resolve the owning schema through `public.store_registry` using
-  the service role, so writes land in the right tenant schema.
-- The migration also **backfills tenants** for users who signed up before it ran.
+- **Provisioning** happens in the signup route: `public.provision_user_tenant()`
+  creates the tenant, membership row and the tenant schema
+  (`public.create_tenant_schema()` runs the DDL) — atomically with the user row.
+- **Routing** is cryptographically bound to the session: the tenant id and schema
+  are embedded in the NextAuth JWT at login and validated (shape-checked) before
+  every use — never read from client-controlled cookies.
+- **Webhooks & admin** resolve the owning schema through `public.store_registry`,
+  so writes land in the right tenant schema.
+- Every tenant query goes through `lib/db.ts` → `tenantTable(schema, "table")`,
+  which validates the identifier (`tenant_<32-hex>` only) before quoting it.
 
-Schema: `supabase/migrations/20260808000000_init.sql` (enums, profiles, helpers) and
-`supabase/migrations/20260815000000_multi_tenant.sql` (tenants + schema provisioning).
+Schema: `db/migrations/20260921000000_neon_init.sql` (single idempotent file).
 
 ## 🚀 Quick start
 
 ```bash
 npm install
-cp .env.example .env.local   # add your Supabase credentials
+cp .env.example .env.local   # add DATABASE_URL + AUTH_SECRET
+npm run db:migrate           # applies db/migrations to your Neon database
 npm run dev                  # → http://localhost:3000
 ```
 
-The app requires a live Supabase project (no in-app demo mode). To explore with sample
-data, seed a demo tenant + store:
+To explore with sample data, seed a demo tenant + store:
 
 ```bash
-supabase link --project-ref <your-ref>
-supabase db push              # applies the migrations
-npm run db:seed               # creates a demo tenant + "Aurora & Oak" store with ~6 months of orders
+npm run db:seed   # creates a demo workspace for SEED_USER_EMAIL (default: the admin email)
 ```
 
-`npm run db:seed` provisions a demo workspace for `SEED_USER_EMAIL` (defaults to the
-platform admin email) — sign up with that account first, then seed.
+Sign up with that email first (password ≥ 6 chars), then re-run the seed.
 
-## 🗄️ Supabase setup
+## 🗄️ Neon setup
 
-1. Create a project at [supabase.com](https://supabase.com).
-2. Copy the API URL + anon key from **Project Settings → API** into `.env.local`.
-3. Run the migrations (tables, triggers, functions & RLS):
+1. Create a project at [console.neon.tech](https://console.neon.tech).
+2. Copy the **pooled** connection string (Dashboard → Connection Details) into
+   `DATABASE_URL` in `.env.local`. The pooled endpoint is important for
+   serverless/webhook bursts.
+3. Run the migrations:
 
    ```bash
-   supabase link --project-ref <your-ref>
-   supabase db push
-   # or paste the migration files into the SQL editor, in order
+   npm run db:migrate
    ```
 
-4. Add `SUPABASE_SERVICE_ROLE_KEY` (server-only) so webhook routes can write orders & journal entries.
-5. Set provider secrets: `SHOPIFY_WEBHOOK_SECRET`, `STRIPE_WEBHOOK_SECRET`, `PAYPAL_WEBHOOK_ID` (webhooks reject unverified payloads when these are unset).
+4. Generate an auth secret: `openssl rand -base64 32` → `AUTH_SECRET`.
+5. Set provider secrets: `SHOPIFY_WEBHOOK_SECRET`, `STRIPE_WEBHOOK_SECRET`,
+   `PAYPAL_WEBHOOK_ID` (webhooks reject unverified payloads when these are unset).
 
 ## 🔗 Connecting a store (webhooks)
 
@@ -125,8 +125,9 @@ src/
 │   │   ├── orders/                 # normalized orders with true profit
 │   │   ├── ledger/                 # journal entries + chart of accounts
 │   │   └── reports/income-statement/
-│   ├── login | signup/             # Supabase auth
-│   ├── admin/                      # platform-wide console (service-role)
+│   ├── login | signup/             # NextAuth credentials auth
+│   ├── admin/                      # platform-wide console
+│   ├── api/auth/                   # NextAuth handlers + signup/signin JSON endpoints
 │   └── api/webhooks/{shopify,stripe,paypal,woocommerce}/
 ├── components/
 │   ├── charts/                     # hand-rolled SVG charts (no chart lib)
@@ -134,14 +135,15 @@ src/
 │   ├── profit-calculator.tsx       # interactive true-profit demo
 │   └── store-connect.tsx           # multi-step connect wizard
 ├── lib/
+│   ├── auth.ts                     # NextAuth v5 config (credentials + JWT tenant context)
+│   ├── db.ts                       # Neon serverless driver + identifier validation
 │   ├── accounting/                 # chart of accounts, double entry, profit engine, P&L
 │   ├── providers/                  # signature verification + payload normalization
-│   ├── supabase/                   # client / server / admin / middleware (schema-aware)
-│   ├── tenants.ts                  # tenant context helpers (cookies → schema)
+│   ├── tenants.ts                  # tenant context from the verified session
 │   ├── webhooks/ingest.ts          # persist → profit → journal → event log (tenant-scoped)
 │   └── data/repository.ts          # page reads, scoped to the tenant schema
 └── types/                          # shared domain types
-supabase/migrations/                # SQL schema: shared metadata + schema-per-tenant provisioning
+db/migrations/                      # SQL schema (Neon, plain Postgres)
 scripts/seed-demo-data.mjs          # demo tenant + store + orders (npm run db:seed)
 ```
 
@@ -151,7 +153,8 @@ scripts/seed-demo-data.mjs          # demo tenant + store + orders (npm run db:s
 npm run typecheck   # TypeScript strict check
 npm run lint        # ESLint
 npm run build       # production build
-npm run db:seed     # seed a demo tenant + store (requires service role + SEED_USER_EMAIL)
+npm run db:migrate  # apply db/migrations to DATABASE_URL
+npm run db:seed     # seed a demo tenant + store (requires SEED_USER_EMAIL account)
 ```
 
 ### 🧪 Testing the Shopify webhook
@@ -166,7 +169,7 @@ SHOPIFY_WEBHOOK_SECRET=... STORE_ID=<store-uuid> npm run webhook:simulate
 normalization, profit math, balanced sale/refund journal entries) without a server or
 database. `scripts/simulate-shopify-webhook.mjs` sends a realistic `orders/create`
 webhook to a running instance and asserts the parsed order + true net profit + HMAC
-rejection; set `BASE_URL` to target a different host.
+rejection; set `BASE_URL` to target a different host (e.g. your Vercel URL).
 
 ## 🧮 The accounting model
 
@@ -188,13 +191,12 @@ shipping always equals the true net profit shown on the dashboard.
 
 ## 🛡️ Admin console
 
-`/admin` is a platform-wide console (service-role, bypasses RLS) that aggregates data
-across **every tenant schema**:
+`/admin` is a platform-wide console that aggregates data across **every tenant schema**:
 
 | Tab | What it shows |
 | --- | --- |
 | **Overview** | Users, stores, orders & gateway fee KPIs, webhook health |
-| **Users** | Every account: profile (from `profiles`), stores, orders, revenue, ban/unban |
+| **Users** | Every account: profile (from `profiles`), stores, orders, revenue, disable/enable |
 | **Stores** | All stores with owner, platform, status, revenue & fees — update status |
 | **Webhooks** | `integration_events` across all stores, filtered by provider/status |
 | **Gateway fees** | Fee breakdown per provider: volume, effective rate, monthly series |
@@ -212,10 +214,8 @@ HMAC-signed cookie) adds a second factor.
 | --- | --- | --- |
 | `/api/admin/overview` | GET | Platform-wide KPIs + recent events |
 | `/api/admin/users` | GET | All users with profiles & aggregates |
-| `/api/admin/users/[id]` | PATCH | Update profile name or ban/unban |
+| `/api/admin/users/[id]` | PATCH | Update profile name or disable/enable |
 | `/api/admin/stores` | GET | All stores with owner & usage |
 | `/api/admin/stores/[id]` | PATCH | Change store status (resolved via `store_registry`) |
 | `/api/admin/events` | GET | Webhook events (+ `?provider=&status=`) |
 | `/api/admin/fees` | GET | Gateway fee breakdown |
-
-> Live data requires `SUPABASE_SERVICE_ROLE_KEY`.

@@ -1,15 +1,15 @@
 /**
- * ── Demo data seed (multi-tenant) ─────────────────────────────────────────────
+ * ── Demo data seed (multi-tenant, Neon) ───────────────────────────────────────
  *
  * Provisions a working demo tenant + schema + store with realistic orders,
- * journal entries and webhook events, using the service role. This replaces the
- * old in-app "demo mode": the app itself always talks to Supabase, and this
- * script is how you get sample data into a fresh database.
+ * journal entries and webhook events, over a direct Postgres connection.
+ * The app talks to Neon via DATABASE_URL, and this script is how you get
+ * sample data into a fresh database.
  *
  * Requirements (in .env.local):
- *   NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
- *   SEED_USER_EMAIL            — the account that should own the demo tenant
- *                                (defaults to the platform admin email)
+ *   DATABASE_URL         — Neon (or any Postgres) connection string
+ *   SEED_USER_EMAIL      — the account that should own the demo tenant
+ *                          (defaults to the platform admin email)
  *
  * Usage:
  *   npm run db:seed
@@ -17,9 +17,11 @@
  * The script is idempotent: re-running it will not duplicate the demo store
  * (it upserts by the fixed demo store id / order external ids).
  */
-import { createClient } from "@supabase/supabase-js";
+import pg from "pg";
 
-// ─── deterministic PRNG + catalog (same dataset as the legacy demo mode) ─────
+const { Client } = pg;
+
+// ─── deterministic PRNG + catalog ─────────────────────────────────────────────
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -208,223 +210,212 @@ function randomUUID() {
   return crypto.randomUUID();
 }
 
+/** Quote a Postgres identifier (schema/table names built by this app). */
+function qI(name) {
+  const normalized = String(name).toLowerCase();
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(normalized)) {
+    fail(`Invalid database identifier: ${JSON.stringify(name)}`);
+  }
+  return `"${normalized}"`;
+}
+
 // ─── main ────────────────────────────────────────────────────────────────────
 
 async function main() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !serviceKey) {
-    fail(
-      "Supabase credentials missing. Add NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY to .env.local.",
-    );
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) {
+    fail("DATABASE_URL missing. Add your Neon connection string to .env.local.");
   }
 
   const ownerEmail = process.env.SEED_USER_EMAIL || "bood68155@gmail.com";
   console.log(`\nSeeding demo data for ${ownerEmail} …\n`);
 
-  const admin = createClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-  });
+  const client = new Client({ connectionString });
+  await client.connect();
 
-  // 1. Resolve the owner user (must exist in auth.users).
-  const { data: userPage, error: userError } = await admin.auth.admin.listUsers();
-  if (userError) fail(`Failed to list users: ${userError.message}`);
-  const owner = (userPage?.users ?? []).find((u) => u.email?.toLowerCase() === ownerEmail.toLowerCase());
-  if (!owner) {
-    fail(
-      `No auth user with email "${ownerEmail}" found. Sign up first (or set SEED_USER_EMAIL to an existing account), then re-run.`,
+  try {
+    // 1. Resolve the owner user (must already exist — sign up first).
+    const userRes = await client.query(
+      "select id, email from users where lower(email) = $1 limit 1",
+      [ownerEmail.toLowerCase()],
     );
-  }
-
-  // 2. Ensure a tenant + schema exist for the owner.
-  const { data: tenant } = await admin
-    .from("tenants")
-    .select("id, schema_name")
-    .eq("owner_id", owner.id)
-    .maybeSingle();
-
-  let tenantId = tenant?.id ?? null;
-  let schemaName = tenant?.schema_name ?? null;
-
-  if (!tenantId) {
-    const { data: created, error: tenantError } = await admin
-      .from("tenants")
-      .insert({ owner_id: owner.id, name: "Demo Workspace", slug: `demo-${randomUUID().slice(0, 8)}`, schema_name: "" })
-      .select("id")
-      .single();
-    if (tenantError) fail(`Failed to create tenant: ${tenantError.message}`);
-    tenantId = created.id;
-
-    const { data: provisioned, error: provisionError } = await admin.rpc("create_tenant_schema", {
-      p_tenant_id: tenantId,
-    });
-    if (provisionError) fail(`Failed to provision tenant schema: ${provisionError.message}`);
-    schemaName = provisioned;
-
-    await admin.from("tenants").update({ schema_name: schemaName }).eq("id", tenantId);
-    await admin.from("tenant_users").insert({ tenant_id: tenantId, user_id: owner.id, role: "owner" });
-    console.log(`  created tenant ${tenantId} → schema ${schemaName}`);
-  } else {
-    console.log(`  reusing tenant ${tenantId} → schema ${schemaName}`);
-  }
-
-  if (!schemaName) fail("Could not resolve the tenant schema.");
-
-  const db = createClient(url, serviceKey, {
-    auth: { autoRefreshToken: false, persistSession: false },
-    db: { schema: schemaName },
-  });
-
-  // 3. Demo store (fixed id so re-seeding is idempotent).
-  const DEMO_STORE_ID = "00000000-0000-4000-8000-00000000a000";
-  const store = {
-    id: DEMO_STORE_ID,
-    user_id: owner.id,
-    name: "Aurora & Oak",
-    platform: "shopify",
-    domain: "auroraandoak.myshopify.com",
-    currency: "USD",
-    status: "connected",
-    config: { seeded: true },
-  };
-  const { error: storeError } = await db.from("stores").upsert(store, { onConflict: "id" });
-  if (storeError) fail(`Failed to upsert demo store: ${storeError.message}`);
-
-  // 4. Chart of accounts.
-  const { error: coaError } = await db.rpc("seed_chart_of_accounts", { p_store_id: DEMO_STORE_ID });
-  if (coaError) fail(`Failed to seed chart of accounts: ${coaError.message}`);
-
-  // 5. Products.
-  const products = CATALOG.map((p, i) => ({
-    store_id: DEMO_STORE_ID,
-    external_id: `shopify-prod-${1000 + i}`,
-    sku: p.sku,
-    name: p.name,
-    unit_cost: p.cost,
-    unit_price: p.price,
-  }));
-  const { error: productsError } = await db.from("products").upsert(products, { onConflict: "store_id,sku" });
-  if (productsError) fail(`Failed to upsert products: ${productsError.message}`);
-
-  // 6. Orders → order_items → journal entries → integration events.
-  const orders = generateOrders(DEMO_STORE_ID);
-  let entryNumber = 0;
-  let orderCount = 0;
-  let entryCount = 0;
-
-  for (const order of orders) {
-    const { data: inserted, error: orderError } = await db
-      .from("orders")
-      .upsert(
-        {
-          store_id: order.store_id,
-          external_id: order.external_id,
-          order_number: order.order_number,
-          customer_name: order.customer_name,
-          currency: order.currency,
-          subtotal: order.subtotal,
-          shipping_amount: order.shipping_amount,
-          discount_amount: order.discount_amount,
-          tax_amount: order.tax_amount,
-          total_amount: order.total_amount,
-          payment_gateway: order.payment_gateway,
-          payment_fee: order.payment_fee,
-          shipping_cost: order.shipping_cost,
-          refund_amount: order.refund_amount,
-          status: order.status,
-          ordered_at: order.ordered_at,
-        },
-        { onConflict: "store_id,external_id" },
-      )
-      .select("id")
-      .single();
-    if (orderError) fail(`Failed to upsert order ${order.order_number}: ${orderError.message}`);
-    orderCount += 1;
-
-    // Keep items idempotent: replace items for this order rather than upserting.
-    await db.from("order_items").delete().eq("order_id", inserted.id);
-    const { error: itemsError } = await db.from("order_items").insert(
-      order.items.map((item) => ({
-        order_id: inserted.id,
-        sku: item.sku,
-        name: item.name,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        unit_cost: item.unit_cost,
-        line_subtotal: item.line_subtotal,
-        line_cost: item.line_cost,
-      })),
-    );
-    if (itemsError) fail(`Failed to insert order items for ${order.order_number}: ${itemsError.message}`);
-
-    // Journal entries (sale + refund) + entry_numbers tracking.
-    const entries = [];
-    entryNumber += 1;
-    entries.push(createSaleEntry(order, entryNumber));
-    if (order.refund_amount > 0) {
-      entryNumber += 1;
-      entries.push(createRefundEntry(order, order.refund_amount, entryNumber));
-    }
-
-    for (const entry of entries) {
-      const { data: entryRow, error: entryError } = await db
-        .from("journal_entries")
-        .upsert(
-          {
-            store_id: entry.store_id,
-            entry_number: entry.entry_number,
-            entry_date: entry.entry_date,
-            description: entry.description,
-            reference: entry.reference,
-            source: entry.source,
-            status: entry.status,
-          },
-          { onConflict: "store_id,entry_number" },
-        )
-        .select("id")
-        .single();
-      if (entryError) fail(`Failed to upsert journal entry: ${entryError.message}`);
-      entryCount += 1;
-
-      await db.from("journal_lines").delete().eq("entry_id", entryRow.id);
-      const { error: linesError } = await db.from("journal_lines").insert(
-        entry.lines.map((line) => ({
-          entry_id: entryRow.id,
-          account_code: line.account_code,
-          account_name: line.account_name,
-          account_type: line.account_type,
-          description: line.description,
-          debit: line.debit,
-          credit: line.credit,
-        })),
+    const owner = userRes.rows[0];
+    if (!owner) {
+      fail(
+        `No user with email "${ownerEmail}" found. Sign up first (or set SEED_USER_EMAIL to an existing account), then re-run.`,
       );
-      if (linesError) fail(`Failed to insert journal lines: ${linesError.message}`);
     }
 
-    await db
-      .from("orders")
-      .update({ entry_numbers: entries.map((e) => e.entry_number) })
-      .eq("id", inserted.id);
+    // 2. Ensure a tenant + schema exist for the owner.
+    const tenantRes = await client.query(
+      "select id, schema_name from tenants where owner_id = $1 limit 1",
+      [owner.id],
+    );
+
+    let tenantId = tenantRes.rows[0]?.id ?? null;
+    let schemaName = tenantRes.rows[0]?.schema_name ?? null;
+
+    if (!tenantId) {
+      const created = await client.query(
+        "insert into tenants (owner_id, name, slug, schema_name) values ($1, $2, $3, '') returning id",
+        [owner.id, "Demo Workspace", `demo-${randomUUID().slice(0, 8)}`],
+      );
+      tenantId = created.rows[0].id;
+
+      const provisioned = await client.query(
+        "select public.create_tenant_schema($1) as schema",
+        [tenantId],
+      );
+      schemaName = provisioned.rows[0].schema;
+
+      await client.query("update tenants set schema_name = $2 where id = $1", [tenantId, schemaName]);
+      await client.query(
+        "insert into tenant_users (tenant_id, user_id, role) values ($1, $2, 'owner') on conflict do nothing",
+        [tenantId, owner.id],
+      );
+      console.log(`  created tenant ${tenantId} → schema ${schemaName}`);
+    } else {
+      console.log(`  reusing tenant ${tenantId} → schema ${schemaName}`);
+    }
+
+    if (!schemaName) fail("Could not resolve the tenant schema.");
+    const T = (table) => `${qI(schemaName)}.${qI(table)}`;
+
+    // 3. Demo store (fixed id so re-seeding is idempotent).
+    const DEMO_STORE_ID = "00000000-0000-4000-8000-00000000a000";
+    await client.query(
+      `insert into ${T("stores")} (id, user_id, name, platform, domain, currency, status, config)
+       values ($1, $2, 'Aurora & Oak', 'shopify', 'auroraandoak.myshopify.com', 'USD', 'connected', '{"seeded":true}'::jsonb)
+       on conflict (id) do update set name = excluded.name, updated_at = now()`,
+      [DEMO_STORE_ID, owner.id],
+    );
+
+    // 4. Chart of accounts.
+    await client.query(`select ${qI(schemaName)}.seed_chart_of_accounts($1)`, [DEMO_STORE_ID]);
+
+    // 5. Products.
+    for (const [i, p] of CATALOG.entries()) {
+      await client.query(
+        `insert into ${T("products")} (store_id, external_id, sku, name, unit_cost, unit_price)
+         values ($1, $2, $3, $4, $5, $6)
+         on conflict (store_id, sku) do update set
+           name = excluded.name, unit_cost = excluded.unit_cost,
+           unit_price = excluded.unit_price, updated_at = now()`,
+        [DEMO_STORE_ID, `shopify-prod-${1000 + i}`, p.sku, p.name, p.cost, p.price],
+      );
+    }
+
+    // 6. Orders → order_items → journal entries → integration events.
+    const orders = generateOrders(DEMO_STORE_ID);
 
     // Events: replace per store so re-seeding stays idempotent.
-    await db.from("integration_events").delete().eq("store_id", DEMO_STORE_ID);
-    const { error: eventError } = await db.from("integration_events").insert({
-      store_id: DEMO_STORE_ID,
-      provider: order.gateway_provider,
-      event_type: order.refund_amount > 0 ? "refund" : "orders/create",
-      payload: { order_number: order.order_number },
-      status: "processed",
-      processed_at: new Date(new Date(order.ordered_at).getTime() + 45_000).toISOString(),
-    });
-    if (eventError) fail(`Failed to insert integration event: ${eventError.message}`);
-  }
+    await client.query(`delete from ${T("integration_events")} where store_id = $1`, [DEMO_STORE_ID]);
 
-  console.log(`  store:        Aurora & Oak (${DEMO_STORE_ID})`);
-  console.log(`  products:     ${CATALOG.length}`);
-  console.log(`  orders:       ${orderCount}`);
-  console.log(`  entries:      ${entryCount}`);
-  console.log(`  events:       ${orders.length}`);
-  console.log("\n✅ Demo data seeded. Sign in as the owner to explore the dashboard, ledger and income statement.\n");
+    let entryNumber = 0;
+    let orderCount = 0;
+    let entryCount = 0;
+
+    for (const order of orders) {
+      const inserted = await client.query(
+        `insert into ${T("orders")}
+           (store_id, external_id, order_number, customer_name, currency,
+            subtotal, shipping_amount, discount_amount, tax_amount, total_amount,
+            payment_gateway, payment_fee, shipping_cost, refund_amount, status, ordered_at)
+         values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         on conflict (store_id, external_id) do update set
+           customer_name = excluded.customer_name,
+           subtotal = excluded.subtotal, shipping_amount = excluded.shipping_amount,
+           discount_amount = excluded.discount_amount, tax_amount = excluded.tax_amount,
+           total_amount = excluded.total_amount, payment_gateway = excluded.payment_gateway,
+           payment_fee = excluded.payment_fee, shipping_cost = excluded.shipping_cost,
+           refund_amount = excluded.refund_amount, status = excluded.status,
+           ordered_at = excluded.ordered_at
+         returning id`,
+        [
+          order.store_id, order.external_id, order.order_number, order.customer_name, order.currency,
+          order.subtotal, order.shipping_amount, order.discount_amount, order.tax_amount, order.total_amount,
+          order.payment_gateway, order.payment_fee, order.shipping_cost, order.refund_amount,
+          order.status, order.ordered_at,
+        ],
+      );
+      const orderId = inserted.rows[0].id;
+      orderCount += 1;
+
+      // Keep items idempotent: replace items for this order rather than upserting.
+      await client.query(`delete from ${T("order_items")} where order_id = $1`, [orderId]);
+      for (const item of order.items) {
+        await client.query(
+          `insert into ${T("order_items")}
+             (order_id, sku, name, quantity, unit_price, unit_cost, line_subtotal, line_cost)
+           values ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [orderId, item.sku, item.name, item.quantity, item.unit_price, item.unit_cost, item.line_subtotal, item.line_cost],
+        );
+      }
+
+      // Journal entries (sale + refund) + entry_numbers tracking.
+      const entries = [];
+      entryNumber += 1;
+      entries.push(createSaleEntry(order, entryNumber));
+      if (order.refund_amount > 0) {
+        entryNumber += 1;
+        entries.push(createRefundEntry(order, order.refund_amount, entryNumber));
+      }
+
+      const postedNumbers = [];
+      for (const entry of entries) {
+        const entryRow = await client.query(
+          `insert into ${T("journal_entries")}
+             (store_id, entry_number, entry_date, description, reference, source, status)
+           values ($1,$2,$3,$4,$5,$6,$7)
+           on conflict (store_id, entry_number) do update set
+             description = excluded.description, entry_date = excluded.entry_date,
+             reference = excluded.reference, status = excluded.status
+           returning id`,
+          [entry.store_id, entry.entry_number, entry.entry_date, entry.description, entry.reference, entry.source, entry.status],
+        );
+        const entryId = entryRow.rows[0].id;
+        entryCount += 1;
+        postedNumbers.push(entry.entry_number);
+
+        await client.query(`delete from ${T("journal_lines")} where entry_id = $1`, [entryId]);
+        for (const line of entry.lines) {
+          await client.query(
+            `insert into ${T("journal_lines")}
+               (entry_id, account_code, account_name, account_type, description, debit, credit)
+             values ($1,$2,$3,$4,$5,$6,$7)`,
+            [entryId, line.account_code, line.account_name, line.account_type, line.description, line.debit, line.credit],
+          );
+        }
+      }
+
+      await client.query(
+        `update ${T("orders")} set entry_numbers = $2 where id = $1`,
+        [orderId, postedNumbers],
+      );
+
+      await client.query(
+        `insert into ${T("integration_events")}
+           (store_id, provider, event_type, payload, status, processed_at)
+         values ($1, $2, $3, $4::jsonb, 'processed', $5)`,
+        [
+          DEMO_STORE_ID,
+          order.gateway_provider,
+          order.refund_amount > 0 ? "refund" : "orders/create",
+          JSON.stringify({ order_number: order.order_number }),
+          new Date(new Date(order.ordered_at).getTime() + 45_000).toISOString(),
+        ],
+      );
+    }
+
+    console.log(`  store:        Aurora & Oak (${DEMO_STORE_ID})`);
+    console.log(`  products:     ${CATALOG.length}`);
+    console.log(`  orders:       ${orderCount}`);
+    console.log(`  entries:      ${entryCount}`);
+    console.log(`  events:       ${orders.length}`);
+    console.log("\n✅ Demo data seeded. Sign in as the owner to explore the dashboard, ledger and income statement.\n");
+  } finally {
+    await client.end();
+  }
 }
 
 main().catch((err) => fail(err instanceof Error ? err.message : String(err)));

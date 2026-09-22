@@ -1,26 +1,34 @@
-import { cookies } from "next/headers";
+import { auth } from "@/lib/auth";
+import { isTenantSchema } from "@/lib/db";
 
 // ─── Tenant context (schema-per-tenant isolation) ─────────────────────────────
 // Every signed-in user belongs to a tenant, and each tenant owns a dedicated
-// Postgres schema (`tenant_<uuid-hex>`). The middleware resolves the user's
-// tenant after login and stores the tenant id + schema name in cookies; server
-// code reads them here to scope every query to the right schema.
-
-/** Cookie holding the current tenant id (plain — safe, non-sensitive). */
-export const TENANT_ID_COOKIE = "tenant-id";
-/** Cookie holding the current tenant's Postgres schema name. */
-export const TENANT_SCHEMA_COOKIE = "tenant-schema";
+// Postgres schema (`tenant_<uuid-hex>`). The tenant is resolved at login and
+// embedded in the NextAuth JWT; server code reads it here to scope every query
+// to the right schema. Unlike the previous cookie-based approach, the tenant
+// cannot be spoofed — it is cryptographically bound to the session.
 
 export interface TenantContext {
   tenantId: string | null;
   schema: string | null;
 }
 
+/**
+ * The signed-in user's tenant context. Reads come from the verified JWT —
+ * never from client-controlled input. Returns nulls when signed out or when
+ * the account has no tenant provisioned yet.
+ */
 export async function getTenantContext(): Promise<TenantContext> {
-  const store = await cookies();
+  const session = await auth();
+  const tenantId = session?.user?.tenantId ?? null;
+  const schema = session?.user?.tenantSchema ?? null;
+
+  // Defense in depth: ignore any schema value that doesn't match the
+  // tenant_<32-hex> shape, so a stale/corrupt token can never select an
+  // arbitrary schema.
   return {
-    tenantId: store.get(TENANT_ID_COOKIE)?.value ?? null,
-    schema: store.get(TENANT_SCHEMA_COOKIE)?.value ?? null,
+    tenantId: tenantId ?? null,
+    schema: isTenantSchema(schema) ? schema : null,
   };
 }
 

@@ -1,3 +1,4 @@
+import { eq, desc } from "drizzle-orm";
 import type {
   IncomeStatement,
   JournalEntry,
@@ -9,16 +10,17 @@ import type {
   WebhookEvent,
 } from "@/types";
 import { getTenantSchema } from "@/lib/tenants";
+import { tenantDb, isTenantSchema, getTenantTables } from "@/lib/db";
+import type { TenantOrderItemRow, TenantOrderRow } from "@/lib/db/tenant";
 import { buildIncomeStatementFromOrders } from "@/lib/accounting/incomeStatement";
 import { computeMonthlySeries, computeStats } from "@/lib/accounting/profitEngine";
-import { createClient } from "@/lib/supabase/server";
 
 /**
  * Repository: the single entry point for page data.
  *
- * Every read is scoped to the signed-in user's tenant schema (resolved by the
- * middleware and exposed via cookies). There is no demo fallback — the app
- * always reads from Supabase.
+ * Every read is scoped to the signed-in user's tenant schema (resolved from
+ * the NextAuth session — see lib/tenants). There is no demo fallback — the
+ * app always reads from Neon via Drizzle.
  */
 
 export interface StoreOverview {
@@ -41,135 +43,206 @@ function emptyOverview(): StoreOverview {
   };
 }
 
-/** Resolve the tenant schema, returning null when there is no signed-in tenant. */
-async function tenantClient() {
-  const schema = await getTenantSchema();
-  if (!schema) return null;
-  return createClient(schema);
-}
-
-/** If no store id was given, fall back to the tenant's first store. */
-async function resolveStoreId(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  storeId?: string,
-): Promise<string | null> {
-  if (storeId) return storeId;
-  const { data } = await supabase.from("stores").select("id").limit(1).maybeSingle();
-  return data?.id ?? null;
-}
-
-function mapOrderRow(row: Record<string, unknown>): Order {
+/** Map a tenant-schema order row + its items to the domain DTO. */
+function mapOrderRow(row: TenantOrderRow, items: TenantOrderItemRow[]): Order {
   return {
-    store_id: row.store_id as string,
-    external_id: row.external_id as string,
-    order_number: row.order_number as string,
-    customer_name: row.customer_name as string,
-    currency: row.currency as string,
-    subtotal: Number(row.subtotal),
-    shipping_amount: Number(row.shipping_amount),
-    discount_amount: Number(row.discount_amount),
-    tax_amount: Number(row.tax_amount),
-    total_amount: Number(row.total_amount),
-    payment_gateway: row.payment_gateway as string,
-    payment_fee: Number(row.payment_fee),
-    shipping_cost: Number(row.shipping_cost),
-    refund_amount: Number(row.refund_amount),
-    status: row.status as Order["status"],
-    ordered_at: row.ordered_at as string,
-    items: ((row.order_items as Record<string, unknown>[]) ?? []).map((item) => ({
-      sku: item.sku as string,
-      name: item.name as string,
-      quantity: item.quantity as number,
-      unit_price: Number(item.unit_price),
-      unit_cost: Number(item.unit_cost),
-      line_subtotal: Number(item.line_subtotal),
-      line_cost: Number(item.line_cost),
+    store_id: row.storeId,
+    external_id: row.externalId,
+    order_number: row.orderNumber,
+    customer_name: row.customerName ?? "",
+    currency: row.currency,
+    subtotal: row.subtotal,
+    shipping_amount: row.shippingAmount,
+    discount_amount: row.discountAmount,
+    tax_amount: row.taxAmount,
+    total_amount: row.totalAmount,
+    payment_gateway: row.paymentGateway,
+    payment_fee: row.paymentFee,
+    shipping_cost: row.shippingCost,
+    refund_amount: row.refundAmount,
+    status: row.status,
+    ordered_at: row.orderedAt.toISOString(),
+    items: items.map((item) => ({
+      sku: item.sku,
+      name: item.name,
+      quantity: item.quantity,
+      unit_price: item.unitPrice,
+      unit_cost: item.unitCost,
+      line_subtotal: item.lineSubtotal,
+      line_cost: item.lineCost,
     })),
   };
 }
 
-export async function fetchStoreOverview(storeId?: string): Promise<StoreOverview> {
-  const supabase = await tenantClient();
-  if (!supabase) return emptyOverview();
+/** If no store id was given, fall back to the tenant's first store. */
+async function resolveStoreId(
+  t: ReturnType<typeof getTenantTables>,
+  db: ReturnType<typeof tenantDb>,
+  storeId?: string,
+): Promise<string | null> {
+  if (storeId) return storeId;
+  const rows = await db.select({ id: t.stores.id }).from(t.stores).orderBy(t.stores.createdAt).limit(1);
+  return rows[0]?.id ?? null;
+}
 
-  const resolved = await resolveStoreId(supabase, storeId);
+export async function fetchStoreOverview(storeId?: string): Promise<StoreOverview> {
+  const schema = await getTenantSchema();
+  if (!schema || !isTenantSchema(schema)) return emptyOverview();
+
+  const db = tenantDb(schema);
+  const t = getTenantTables(schema);
+
+  const resolved = await resolveStoreId(t, db, storeId);
   if (!resolved) return emptyOverview();
 
-  const { data: store } = await supabase
-    .from("stores")
-    .select("*")
-    .eq("id", resolved)
-    .maybeSingle();
+  const storeRows = await db.select().from(t.stores).where(eq(t.stores.id, resolved)).limit(1);
+  const store = storeRows[0];
   if (!store) return emptyOverview();
 
-  const { data: orders } = await supabase
-    .from("orders")
-    .select("*, order_items(*)")
-    .eq("store_id", resolved)
-    .order("ordered_at", { ascending: false });
-
-  const { data: products } = await supabase
-    .from("products")
-    .select("*")
-    .eq("store_id", resolved);
-
-  const { data: recentEvents } = await supabase
-    .from("integration_events")
-    .select("*")
-    .eq("store_id", resolved)
-    .order("processed_at", { ascending: false })
+  const orderRows = await db
+    .select()
+    .from(t.orders)
+    .where(eq(t.orders.storeId, resolved))
+    .orderBy(desc(t.orders.orderedAt));
+  const itemRows = await db
+    .select({ item: t.orderItems })
+    .from(t.orderItems)
+    .innerJoin(t.orders, eq(t.orders.id, t.orderItems.orderId))
+    .where(eq(t.orders.storeId, resolved))
+    .orderBy(t.orderItems.createdAt);
+  const productRows = await db
+    .select()
+    .from(t.products)
+    .where(eq(t.products.storeId, resolved))
+    .orderBy(t.products.createdAt);
+  const eventRows = await db
+    .select()
+    .from(t.integrationEvents)
+    .where(eq(t.integrationEvents.storeId, resolved))
+    .orderBy(desc(t.integrationEvents.processedAt))
     .limit(10);
 
-  const normalizedOrders = (orders ?? []).map(mapOrderRow);
+  const itemsByOrder = new Map<string, typeof itemRows>();
+  for (const { item } of itemRows) {
+    if (!itemsByOrder.has(item.orderId)) itemsByOrder.set(item.orderId, []);
+    itemsByOrder.get(item.orderId)!.push({ item });
+  }
+
+  const normalizedOrders: Order[] = orderRows.map((row) =>
+    mapOrderRow(row, (itemsByOrder.get(row.id) ?? []).map((x) => x.item)),
+  );
+
+  const storeDto: Store = {
+    id: store.id,
+    user_id: store.userId,
+    name: store.name,
+    platform: store.platform,
+    domain: store.domain,
+    currency: store.currency,
+    status: store.status,
+    config: store.config,
+    created_at: store.createdAt.toISOString(),
+  };
+
+  const products: Product[] = productRows.map((p) => ({
+    id: p.id,
+    store_id: p.storeId,
+    external_id: p.externalId,
+    sku: p.sku,
+    name: p.name,
+    unit_cost: p.unitCost,
+    unit_price: p.unitPrice,
+    created_at: p.createdAt.toISOString(),
+  }));
+
+  const recentEvents: WebhookEvent[] = eventRows.map((e) => ({
+    id: e.id,
+    store_id: e.storeId,
+    provider: e.provider,
+    event_type: e.eventType,
+    payload: e.payload,
+    status: e.status,
+    error: e.error,
+    processed_at: e.processedAt.toISOString(),
+  }));
 
   return {
-    store: store as Store,
+    store: storeDto,
     orders: normalizedOrders,
-    products: (products ?? []) as Product[],
+    products,
     stats: computeStats(resolved, normalizedOrders),
     monthly: computeMonthlySeries(normalizedOrders, 6),
-    recentEvents: (recentEvents ?? []) as WebhookEvent[],
+    recentEvents,
   };
 }
 
 /** All stores in the signed-in user's tenant. */
 export async function fetchStores(): Promise<Store[]> {
-  const supabase = await tenantClient();
-  if (!supabase) return [];
+  const schema = await getTenantSchema();
+  if (!schema || !isTenantSchema(schema)) return [];
 
-  const { data } = await supabase.from("stores").select("*").order("created_at", { ascending: true });
-  return (data ?? []) as Store[];
+  const db = tenantDb(schema);
+  const t = getTenantTables(schema);
+  const rows = await db.select().from(t.stores).orderBy(t.stores.createdAt);
+  return rows.map((s) => ({
+    id: s.id,
+    user_id: s.userId,
+    name: s.name,
+    platform: s.platform,
+    domain: s.domain,
+    currency: s.currency,
+    status: s.status,
+    config: s.config,
+    created_at: s.createdAt.toISOString(),
+  }));
 }
 
 export async function fetchLedger(storeId?: string): Promise<JournalEntry[]> {
-  const supabase = await tenantClient();
-  if (!supabase) return [];
+  const schema = await getTenantSchema();
+  if (!schema || !isTenantSchema(schema)) return [];
 
-  const resolved = await resolveStoreId(supabase, storeId);
+  const db = tenantDb(schema);
+  const t = getTenantTables(schema);
+
+  const resolved = await resolveStoreId(t, db, storeId);
   if (!resolved) return [];
 
-  const { data: entries } = await supabase
-    .from("journal_entries")
-    .select("*, journal_lines(*)")
-    .eq("store_id", resolved)
-    .order("entry_number", { ascending: true });
+  const entryRows = await db
+    .select()
+    .from(t.journalEntries)
+    .where(eq(t.journalEntries.storeId, resolved))
+    .orderBy(t.journalEntries.entryNumber);
+  if (entryRows.length === 0) return [];
 
-  return (entries ?? []).map((entry) => ({
+  const lineRows = await db
+    .select({ line: t.journalLines })
+    .from(t.journalLines)
+    .innerJoin(t.journalEntries, eq(t.journalEntries.id, t.journalLines.entryId))
+    .where(eq(t.journalEntries.storeId, resolved))
+    .orderBy(t.journalLines.id);
+
+  const linesByEntry = new Map<string, typeof lineRows>();
+  for (const { line } of lineRows) {
+    if (!linesByEntry.has(line.entryId)) linesByEntry.set(line.entryId, []);
+    linesByEntry.get(line.entryId)!.push({ line });
+  }
+
+  return entryRows.map((entry) => ({
     id: entry.id,
-    store_id: entry.store_id,
-    entry_number: entry.entry_number,
-    entry_date: entry.entry_date,
+    store_id: entry.storeId,
+    entry_number: entry.entryNumber,
+    entry_date: entry.entryDate,
     description: entry.description,
-    reference: entry.reference,
+    reference: entry.reference ?? "",
     source: entry.source,
     status: entry.status,
-    lines: ((entry.journal_lines as Record<string, unknown>[]) ?? []).map((l) => ({
-      account_code: l.account_code as string,
-      account_name: l.account_name as string,
-      account_type: l.account_type as JournalEntry["lines"][number]["account_type"],
-      description: l.description as string,
-      debit: Number(l.debit),
-      credit: Number(l.credit),
+    lines: (linesByEntry.get(entry.id) ?? []).map(({ line }) => ({
+      account_code: line.accountCode,
+      account_name: line.accountName,
+      account_type: line.accountType,
+      description: line.description ?? "",
+      debit: line.debit,
+      credit: line.credit,
     })),
   }));
 }

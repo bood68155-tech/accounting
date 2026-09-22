@@ -1,24 +1,76 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- X — multi-tenant schema-per-tenant isolation
+-- X — Neon (plain Postgres) initial schema
+-- Automated AI Accounting & Profitability Engine for E-commerce Stores
 --
--- Architecture change: tenant data no longer lives in `public`. Instead:
---   • public holds only shared metadata: tenants, tenant_users, store_registry
---     and profiles (plus the shared enums/types from the init migration).
---   • Every tenant gets its own Postgres schema (`tenant_<uuid-hex>`) created
---     by create_tenant_schema() containing stores, orders, ledger, products…
---   • RLS inside each tenant schema keys on membership in public.tenant_users,
---     so users can only ever reach their own tenant's schema.
---   • The webhook/admin layers resolve the tenant schema via public.store_registry
---     / public.tenants using the service role.
+-- Ported from the Supabase schema. Differences:
+--   • `auth.users` is replaced by a first-class public.users table (bcrypt
+--     password hashes — auth is handled by NextAuth in the app layer).
+--   • No RLS, grants, or PostgREST config: the app connects with a single
+--     owner connection string and enforces tenant scoping in the data layer
+--     (every tenant query is schema-qualified via lib/db `tenantTable`).
+--   • User → tenant provisioning is an explicit function called by the
+--     signup route instead of an auth trigger.
 --
--- Run order: this migration assumes 20260808000000_init.sql has been applied.
+-- Run order: single file. Applies to an empty Neon database.
+--   DATABASE_URL=postgres://... npm run db:migrate
 -- ─────────────────────────────────────────────────────────────────────────────
 
--- ── Shared metadata tables ───────────────────────────────────────────────────
+create extension if not exists "pgcrypto";
+
+-- ── Enums ────────────────────────────────────────────────────────────────────
+
+create type public.platform as enum ('shopify', 'woocommerce', 'stripe', 'paypal', 'custom');
+create type public.store_status as enum ('connected', 'syncing', 'disconnected');
+create type public.order_status as enum ('paid', 'pending', 'refunded', 'partially_refunded', 'cancelled');
+create type public.account_type as enum ('asset', 'liability', 'equity', 'revenue', 'expense');
+create type public.normal_balance as enum ('debit', 'credit');
+create type public.entry_source as enum ('order', 'refund', 'fee', 'adjustment', 'manual');
+create type public.entry_status as enum ('draft', 'posted');
+create type public.event_status as enum ('processed', 'failed');
+
+-- ── Helpers ──────────────────────────────────────────────────────────────────
+
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- ── Auth users (replaces Supabase auth.users) ────────────────────────────────
+
+create table public.users (
+  id uuid primary key default gen_random_uuid(),
+  email text not null unique,
+  password_hash text not null,
+  disabled boolean not null default false,
+  last_login_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create trigger set_users_updated_at before update on public.users
+  for each row execute function public.set_updated_at();
+
+-- ── Shared metadata ──────────────────────────────────────────────────────────
+
+create table public.profiles (
+  id uuid primary key references public.users (id) on delete cascade,
+  full_name text,
+  avatar_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create trigger set_profiles_updated_at before update on public.profiles
+  for each row execute function public.set_updated_at();
 
 create table public.tenants (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid not null references auth.users (id) on delete cascade,
+  owner_id uuid not null references public.users (id) on delete cascade,
   name text not null,
   slug text not null unique,
   -- Postgres schema that holds this tenant's data (e.g. tenant_<uuid-hex>).
@@ -27,9 +79,12 @@ create table public.tenants (
   updated_at timestamptz not null default now()
 );
 
+create trigger set_tenants_updated_at before update on public.tenants
+  for each row execute function public.set_updated_at();
+
 create table public.tenant_users (
   tenant_id uuid not null references public.tenants (id) on delete cascade,
-  user_id uuid not null references auth.users (id) on delete cascade,
+  user_id uuid not null references public.users (id) on delete cascade,
   role text not null default 'owner' check (role in ('owner', 'admin', 'member')),
   created_at timestamptz not null default now(),
   primary key (tenant_id, user_id)
@@ -37,7 +92,7 @@ create table public.tenant_users (
 
 -- Maps every store (wherever it lives) to its tenant schema. Written by a
 -- per-schema trigger; read by webhook routes and the admin console so they can
--- find the right schema for a store_id. Not exposed to tenant users.
+-- find the right schema for a store_id.
 create table public.store_registry (
   store_id uuid primary key,
   tenant_id uuid not null references public.tenants (id) on delete cascade,
@@ -46,23 +101,16 @@ create table public.store_registry (
 );
 
 -- ── Tenant schema provisioning ───────────────────────────────────────────────
--- Security definer (owner = postgres) so it can run DDL. The schema name is
--- derived from the tenant id and validated, so callers cannot inject
--- identifiers. Executable only by the service role (revoked below).
+-- Creates the `tenant_<uuid-hex>` schema and everything inside it. The schema
+-- name is derived from the tenant id and shape-validated before use.
 
 create or replace function public.create_tenant_schema(p_tenant_id uuid)
 returns text
 language plpgsql
-security definer
-set search_path = public
 as $$
 declare
   v_schema_name text := 'tenant_' || replace(p_tenant_id::text, '-', '');
-  v_membership text;
-  v_pgrst_setting text;
-  v_schemas text;
 begin
-  -- Validate the identifier shape (tenant_ + 32 hex chars) before using %I.
   if v_schema_name !~ '^tenant_[0-9a-f]{32}$' then
     raise exception 'Invalid tenant id %', p_tenant_id;
   end if;
@@ -72,7 +120,7 @@ begin
   -- ── tables ─────────────────────────────────────────────────────────────
   execute format('create table %I.stores (
     id uuid primary key default gen_random_uuid(),
-    user_id uuid not null references auth.users (id) on delete cascade,
+    user_id uuid not null references public.users (id) on delete cascade,
     name text not null,
     platform public.platform not null,
     domain text,
@@ -158,7 +206,7 @@ begin
     reference text,
     source public.entry_source not null default ''manual'',
     status public.entry_status not null default ''posted'',
-    created_by uuid references auth.users (id),
+    created_by uuid references public.users (id),
     created_at timestamptz not null default now(),
     posted_at timestamptz not null default now(),
     unique (store_id, entry_number)
@@ -201,8 +249,6 @@ begin
   execute format('create or replace function %I.register_store()
     returns trigger
     language plpgsql
-    security definer
-    set search_path = public
     as $fn$
     begin
       insert into public.store_registry (store_id, tenant_id, schema_name)
@@ -219,8 +265,6 @@ begin
   execute format('create or replace function %I.seed_chart_of_accounts(p_store_id uuid)
     returns void
     language plpgsql
-    security definer
-    set search_path = public
     as $fn$
     begin
       insert into %I.ledger_accounts (store_id, code, name, type, normal_balance, is_system, description)
@@ -245,8 +289,6 @@ begin
       on conflict (store_id, code) do nothing;
     end;
     $fn$', v_schema_name, v_schema_name);
-  execute format('revoke all on function %I.seed_chart_of_accounts(uuid) from public, anon, authenticated', v_schema_name);
-  execute format('grant execute on function %I.seed_chart_of_accounts(uuid) to service_role', v_schema_name);
 
   -- True net profit for an order, computed inside the database.
   execute format('create or replace function %I.true_net_profit(p_order_id uuid)
@@ -267,187 +309,55 @@ begin
       from %I.orders o
       where o.id = p_order_id;
     $fn$', v_schema_name, v_schema_name, v_schema_name);
-  execute format('revoke all on function %I.true_net_profit(uuid) from public, anon, authenticated', v_schema_name);
-  execute format('grant execute on function %I.true_net_profit(uuid) to service_role', v_schema_name);
-
-  -- ── privileges ──────────────────────────────────────────────────────────
-  -- Authenticated users (signed-in browser clients) reach tenant schemas
-  -- subject to RLS; the service role (webhooks, seed, admin) bypasses RLS.
-  execute format('grant usage on schema %I to authenticated, service_role', v_schema_name);
-  execute format('grant select, insert, update, delete on all tables in schema %I to authenticated', v_schema_name);
-  execute format('grant all on all tables in schema %I to service_role', v_schema_name);
-  execute format('grant all on all sequences in schema %I to service_role', v_schema_name);
-
-  -- ── expose the schema to PostgREST (so the REST API can reach it) ──────
-  -- Supabase's PostgREST only serves schemas listed in the authenticator
-  -- role's pgrst.db_schemas. Append this tenant's schema and reload config.
-  select coalesce(
-    (select unnest(setconfig) from pg_db_role_setting
-      where setrole = (select oid from pg_roles where rolname = 'authenticator')
-        and unnest(setconfig) like 'pgrst.db_schemas=%'),
-    'pgrst.db_schemas=public, graphql_public'
-  ) into v_pgrst_setting;
-
-  v_schemas := replace(v_pgrst_setting, 'pgrst.db_schemas=', '');
-  if position(v_schema_name in v_schemas) = 0 then
-    v_schemas := v_schemas || ', ' || v_schema_name;
-    execute format('alter role authenticator set pgrst.db_schemas = %L', v_schemas);
-    perform pg_notify('pgrst', 'reload config');
-  end if;
-
-  -- ── Row Level Security (membership in public.tenant_users) ─────────────
-  v_membership := format(
-    'exists (select 1 from public.tenant_users tu where tu.user_id = auth.uid() and tu.tenant_id = %L)',
-    p_tenant_id
-  );
-
-  execute format('alter table %I.stores enable row level security', v_schema_name);
-  execute format('alter table %I.products enable row level security', v_schema_name);
-  execute format('alter table %I.orders enable row level security', v_schema_name);
-  execute format('alter table %I.order_items enable row level security', v_schema_name);
-  execute format('alter table %I.ledger_accounts enable row level security', v_schema_name);
-  execute format('alter table %I.journal_entries enable row level security', v_schema_name);
-  execute format('alter table %I.journal_lines enable row level security', v_schema_name);
-  execute format('alter table %I.integration_events enable row level security', v_schema_name);
-
-  execute format('create policy tenant_select on %I.stores for select using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_insert on %I.stores for insert with check (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_update on %I.stores for update using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_delete on %I.stores for delete using (%s)', v_schema_name, v_membership);
-
-  execute format('create policy tenant_select on %I.products for select using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_insert on %I.products for insert with check (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_update on %I.products for update using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_delete on %I.products for delete using (%s)', v_schema_name, v_membership);
-
-  execute format('create policy tenant_select on %I.orders for select using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_insert on %I.orders for insert with check (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_update on %I.orders for update using (%s)', v_schema_name, v_membership);
-
-  execute format('create policy tenant_select on %I.order_items for select using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_insert on %I.order_items for insert with check (%s)', v_schema_name, v_membership);
-
-  execute format('create policy tenant_select on %I.ledger_accounts for select using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_insert on %I.ledger_accounts for insert with check (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_update on %I.ledger_accounts for update using (%s)', v_schema_name, v_membership);
-
-  execute format('create policy tenant_select on %I.journal_entries for select using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_insert on %I.journal_entries for insert with check (%s)', v_schema_name, v_membership);
-
-  execute format('create policy tenant_select on %I.journal_lines for select using (%s)', v_schema_name, v_membership);
-  execute format('create policy tenant_insert on %I.journal_lines for insert with check (%s)', v_schema_name, v_membership);
-
-  -- integration events: read-only for the tenant (written via service role).
-  execute format('create policy tenant_select on %I.integration_events for select using (%s)', v_schema_name, v_membership);
 
   return v_schema_name;
 end;
 $$;
 
-revoke all on function public.create_tenant_schema(uuid) from public, anon, authenticated;
-grant execute on function public.create_tenant_schema(uuid) to service_role;
+-- ── User → tenant provisioning (called by the signup route) ──────────────────
+-- Idempotent: returns the existing schema when the user already has a tenant.
 
--- ── Auto-provision a tenant for every new user ───────────────────────────────
-
-create or replace function public.handle_new_user()
-returns trigger
+create or replace function public.provision_user_tenant(
+  p_user_id uuid,
+  p_email text,
+  p_full_name text
+)
+returns text
 language plpgsql
-security definer
-set search_path = public
 as $$
 declare
+  v_existing uuid;
   v_tenant_id uuid;
   v_schema_name text;
-  v_name text := coalesce(new.raw_user_meta_data ->> 'full_name', split_part(new.email, '@', 1));
+  v_name text := nullif(p_full_name, '');
   v_slug text;
 begin
-  insert into public.profiles (id, full_name)
-  values (new.id, v_name)
-  on conflict (id) do nothing;
-
-  v_slug := lower(regexp_replace(split_part(new.email, '@', 1), '[^a-z0-9]+', '-', 'g'))
-            || '-' || substr(replace(new.id::text, '-', ''), 1, 8);
-  v_slug := trim(both '-' from v_slug);
-
-  if not exists (select 1 from public.tenants where owner_id = new.id) then
-    insert into public.tenants (owner_id, name, slug, schema_name)
-    values (new.id, v_name || '''s workspace', v_slug, '')
-    returning id into v_tenant_id;
-
-    v_schema_name := public.create_tenant_schema(v_tenant_id);
-    update public.tenants set schema_name = v_schema_name where id = v_tenant_id;
-
-    insert into public.tenant_users (tenant_id, user_id, role)
-    values (v_tenant_id, new.id, 'owner');
+  if v_name is null then
+    v_name := split_part(p_email, '@', 1);
   end if;
 
-  return new;
+  select t.id into v_existing from public.tenants t
+    where t.owner_id = p_user_id limit 1;
+
+  if v_existing is not null then
+    select schema_name into v_schema_name from public.tenants where id = v_existing;
+    return v_schema_name;
+  end if;
+
+  v_slug := lower(regexp_replace(split_part(p_email, '@', 1), '[^a-z0-9]+', '-', 'g'))
+            || '-' || substr(replace(p_user_id::text, '-', ''), 1, 8);
+  v_slug := trim(both '-' from v_slug);
+
+  insert into public.tenants (owner_id, name, slug, schema_name)
+  values (p_user_id, v_name || '''s workspace', v_slug, '')
+  returning id into v_tenant_id;
+
+  v_schema_name := public.create_tenant_schema(v_tenant_id);
+  update public.tenants set schema_name = v_schema_name where id = v_tenant_id;
+
+  insert into public.tenant_users (tenant_id, user_id, role)
+  values (v_tenant_id, p_user_id, 'owner');
+
+  return v_schema_name;
 end;
 $$;
-
--- ── Drop legacy single-schema tenant data (now isolated per schema) ──────────
--- The shared enums, profiles and set_updated_at() helper stay in public.
-
-drop function if exists public.seed_chart_of_accounts(uuid);
-drop function if exists public.true_net_profit(uuid);
-drop table if exists public.integration_events;
-drop table if exists public.journal_lines;
-drop table if exists public.journal_entries;
-drop table if exists public.ledger_accounts;
-drop table if exists public.order_items;
-drop table if exists public.orders;
-drop table if exists public.products;
-drop table if exists public.stores;
-
--- ── Backfill: provision a tenant + schema for users who signed up before ─────
--- this migration (so existing accounts keep working after the refactor).
-
-do $$
-declare
-  r record;
-  v_tenant uuid;
-  v_schema text;
-  v_name text;
-  v_slug text;
-begin
-  for r in
-    select u.id, u.email, u.raw_user_meta_data
-    from auth.users u
-    where not exists (select 1 from public.tenants t where t.owner_id = u.id)
-  loop
-    v_name := coalesce(r.raw_user_meta_data ->> 'full_name', split_part(r.email, '@', 1));
-    v_slug := lower(regexp_replace(split_part(r.email, '@', 1), '[^a-z0-9]+', '-', 'g'))
-              || '-' || substr(replace(r.id::text, '-', ''), 1, 8);
-    v_slug := trim(both '-' from v_slug);
-
-    insert into public.tenants (owner_id, name, slug, schema_name)
-    values (r.id, v_name || '''s workspace', v_slug, '')
-    returning id into v_tenant;
-
-    v_schema := public.create_tenant_schema(v_tenant);
-    update public.tenants set schema_name = v_schema where id = v_tenant;
-
-    insert into public.tenant_users (tenant_id, user_id, role)
-    values (v_tenant, r.id, 'owner');
-  end loop;
-end $$;
-
--- ── RLS on shared metadata ───────────────────────────────────────────────────
-
-alter table public.tenants enable row level security;
-alter table public.tenant_users enable row level security;
-alter table public.store_registry enable row level security;
-
--- A user sees their own tenant(s) — as owner or member.
-create policy "tenants_select_member" on public.tenants
-  for select using (
-    owner_id = auth.uid()
-    or exists (select 1 from public.tenant_users tu where tu.tenant_id = id and tu.user_id = auth.uid())
-  );
-create policy "tenants_update_owner" on public.tenants
-  for update using (owner_id = auth.uid());
-
-create policy "tenant_users_select_own" on public.tenant_users
-  for select using (user_id = auth.uid());
-
--- store_registry is service-role only: no policies → no tenant access.

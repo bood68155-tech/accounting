@@ -1,8 +1,8 @@
 /**
  * Apply migration SQL files to the database via a direct Postgres connection.
  *
- * Reads DATABASE_URL (or SUPABASE_DB_URL) from .env.local / environment.
- * Applies every migration in supabase/migrations in filename order, skipping
+ * Reads DATABASE_URL from .env.local / environment.
+ * Applies every migration in db/migrations in filename order, skipping
  * files whose name is recorded in public._migrations (applied-tracking table,
  * created on first run if missing).
  *
@@ -17,18 +17,17 @@ const { Client } = pg;
 
 const url =
   process.env.DATABASE_URL ||
-  process.env.SUPABASE_DB_URL ||
   process.env.POSTGRES_URL;
 
 if (!url) {
   console.error(
     "Missing DATABASE_URL — set it in .env.local or the environment, e.g.\n" +
-      "  postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres"
+      "  postgresql://neondb_owner:<password>@ep-<ref>-<id>.<region>.aws.neon.tech/neondb?sslmode=require"
   );
   process.exit(1);
 }
 
-const migrationsDir = join(process.cwd(), "supabase", "migrations");
+const migrationsDir = join(process.cwd(), "db", "migrations");
 const files = (await readdir(migrationsDir))
   .filter((f) => f.endsWith(".sql"))
   .sort();
