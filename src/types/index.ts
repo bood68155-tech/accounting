@@ -1,6 +1,6 @@
 // ─── X: shared domain types ────────────────────────────────────
 
-export type Platform = "shopify" | "woocommerce" | "stripe" | "paypal" | "custom";
+export type Platform = "shopify" | "woocommerce" | "stripe" | "paypal" | "salla" | "custom";
 
 export type StoreStatus = "connected" | "syncing" | "disconnected";
 
@@ -39,9 +39,9 @@ export interface Product {
   store_id: string;
   external_id: string | null;
   sku: string;
-  name: string;
-  unit_cost: number;
-  unit_price: number;
+  title: string;
+  selling_price: number;
+  cost_price: number;
   created_at?: string;
 }
 
@@ -155,6 +155,32 @@ export interface IncomeStatement {
   };
   net_profit: number;
   net_margin: number;
+}
+
+/** Balance sheet as of a date — derived from the General Ledger. */
+export interface BalanceSheet {
+  as_of: string; // ISO date
+  assets: {
+    cash: number;
+    accounts_receivable: number;
+    inventory: number;
+    current_assets: number;
+    total_assets: number;
+  };
+  liabilities: {
+    accounts_payable: number;
+    sales_tax_payable: number;
+    current_liabilities: number;
+    total_liabilities: number;
+  };
+  equity: {
+    owners_equity: number;
+    retained_earnings: number;
+    total_equity: number;
+  };
+  total_liabilities_and_equity: number;
+  /** True when Assets = Liabilities + Equity (±0.005 rounding). */
+  balances: boolean;
 }
 
 export interface WebhookEvent {

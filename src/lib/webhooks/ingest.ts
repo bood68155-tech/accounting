@@ -1,9 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, desc } from "drizzle-orm";
+import { and, eq, desc, inArray } from "drizzle-orm";
 import type { JournalEntry, Order, ProfitBreakdown } from "@/types";
 import { toOrder, type NormalizedOrder, type NormalizedPayment } from "@/lib/providers/types";
 import { computeOrderProfit } from "@/lib/accounting/profitEngine";
-import { createFeeEntry, createRefundEntry, createSaleEntry } from "@/lib/accounting/doubleEntry";
+import {
+  createCreditSaleEntry,
+  createFeeEntry,
+  createPaymentCollectionEntry,
+  createRefundEntry,
+  createSaleEntry,
+} from "@/lib/accounting/doubleEntry";
 import {
   isDatabaseConfigured,
   isTenantSchema,
@@ -12,6 +18,7 @@ import {
   tenantDb,
   getTenantTables,
 } from "@/lib/db";
+import { round2 } from "@/lib/utils";
 
 /**
  * ── Webhook ingestion pipeline (Neon + Drizzle) ───────────────────────────────
@@ -206,9 +213,19 @@ async function nextEntryNumber(schema: string): Promise<number> {
   return (rows[0]?.entryNumber ?? 0) + 1;
 }
 
+/**
+ * Post the sale journal entries for an order. Orders that arrive unpaid
+ * (`status: "pending"`) are booked as credit sales — Dr Accounts Receivable —
+ * and the receivable is settled by a later payment event (Stripe/PayPal) via
+ * `settleReceivable`. Paid orders post the classic cash sale entry.
+ */
 async function postEntriesForOrder(schema: string, order: Order): Promise<number[]> {
   let entryNumber = await nextEntryNumber(schema);
-  const entries: JournalEntry[] = [createSaleEntry(order, entryNumber)];
+  const saleEntry =
+    order.status === "pending"
+      ? createCreditSaleEntry(order, entryNumber)
+      : createSaleEntry(order, entryNumber);
+  const entries: JournalEntry[] = [saleEntry];
   if (order.refund_amount > 0) {
     entryNumber += 1;
     entries.push(createRefundEntry(order, order.refund_amount, entryNumber));
@@ -224,6 +241,114 @@ async function postEntriesForOrder(schema: string, order: Order): Promise<number
   return numbers;
 }
 
+/**
+ * Accounts Receivable settlement: when a payment event (Stripe/PayPal) arrives
+ * for an order that was booked as a credit sale, flip Dr AR → Dr Cash + fees.
+ * Revenue is NOT re-recognized — only the balance sheet moves.
+ */
+async function settleReceivable(
+  schema: string,
+  storeId: string,
+  orderExternalId: string,
+): Promise<boolean> {
+  const db = tenantDb(schema);
+  const t = getTenantTables(schema);
+
+  const rows = await db
+    .select()
+    .from(t.orders)
+    .where(
+      and(
+        eq(t.orders.storeId, storeId),
+        eq(t.orders.externalId, orderExternalId),
+        eq(t.orders.status, "pending"),
+      ),
+    )
+    .limit(1);
+  const orderRow = rows[0];
+  if (!orderRow) return false; // nothing booked on credit — nothing to settle
+
+  const itemRows = await db
+    .select()
+    .from(t.orderItems)
+    .where(eq(t.orderItems.orderId, orderRow.id));
+
+  const order: Order = {
+    store_id: orderRow.storeId,
+    external_id: orderRow.externalId,
+    order_number: orderRow.orderNumber,
+    customer_name: orderRow.customerName ?? "",
+    currency: orderRow.currency,
+    subtotal: orderRow.subtotal,
+    shipping_amount: orderRow.shippingAmount,
+    discount_amount: orderRow.discountAmount,
+    tax_amount: orderRow.taxAmount,
+    total_amount: orderRow.totalAmount,
+    payment_gateway: orderRow.paymentGateway,
+    payment_fee: orderRow.paymentFee,
+    shipping_cost: orderRow.shippingCost,
+    refund_amount: orderRow.refundAmount,
+    status: orderRow.status,
+    ordered_at: orderRow.orderedAt.toISOString(),
+    items: itemRows.map((item) => ({
+      sku: item.sku,
+      name: item.name,
+      quantity: item.quantity,
+      unit_price: item.unitPrice,
+      unit_cost: item.unitCost,
+      line_subtotal: item.lineSubtotal,
+      line_cost: item.lineCost,
+    })),
+  };
+
+  const entryNumber = await nextEntryNumber(schema);
+  await persistEntries(schema, [createPaymentCollectionEntry(order, entryNumber)]);
+
+  await db
+    .update(t.orders)
+    .set({ status: "paid" })
+    .where(eq(t.orders.id, orderRow.id));
+  return true;
+}
+
+/**
+ * Fill missing item costs from the tenant's product catalog (SKU → cost_price).
+ * Providers that don't expose per-line costs (most order webhooks) get true
+ * COGS automatically as long as the catalog has the SKU — this is what makes
+ * the "cost prices drive COGS" loop real for every platform.
+ */
+async function enrichWithCatalogCosts(
+  schema: string,
+  storeId: string,
+  order: Order,
+): Promise<Order> {
+  const missing = order.items.filter((i) => i.unit_cost === 0 && i.sku && i.sku !== "N/A");
+  if (missing.length === 0) return order;
+
+  const t = getTenantTables(schema);
+  const skus = [...new Set(missing.map((i) => i.sku))];
+  const catalogRows = await tenantDb(schema)
+    .select({ sku: t.products.sku, costPrice: t.products.costPrice })
+    .from(t.products)
+    .where(and(eq(t.products.storeId, storeId), inArray(t.products.sku, skus)));
+  const costBySku = new Map(catalogRows.map((r) => [r.sku, r.costPrice]));
+  if (costBySku.size === 0) return order;
+
+  return {
+    ...order,
+    items: order.items.map((item) => {
+      if (item.unit_cost !== 0) return item;
+      const cost = costBySku.get(item.sku);
+      if (cost === undefined || cost <= 0) return item;
+      return {
+        ...item,
+        unit_cost: cost,
+        line_cost: round2(cost * item.quantity),
+      };
+    }),
+  };
+}
+
 /** Process a normalized order webhook. */
 export async function processOrderWebhook(input: {
   provider: string;
@@ -233,8 +358,8 @@ export async function processOrderWebhook(input: {
   eventType: string;
   rawPayload: Record<string, unknown>;
 }): Promise<IngestResult> {
-  const order = toOrder(input.normalized, input.storeId, input.storeCurrency);
-  const profit = computeOrderProfit(order);
+  let order = toOrder(input.normalized, input.storeId, input.storeCurrency);
+  let profit = computeOrderProfit(order);
 
   if (!isDatabaseConfigured()) {
     return {
@@ -257,6 +382,10 @@ export async function processOrderWebhook(input: {
         message: `Store ${input.storeId} is not registered to a tenant. Connect the store first, then replay this webhook.`,
       };
     }
+
+    // True COGS: fill zero-cost lines from the tenant catalog before booking.
+    order = await enrichWithCatalogCosts(schema, input.storeId, order);
+    profit = computeOrderProfit(order);
 
     const { upserted, entryNumbers: existingNumbers } = await persistOrder(schema, order, input.rawPayload);
     const entryNumbers = upserted ? await postEntriesForOrder(schema, order) : existingNumbers;
@@ -325,7 +454,13 @@ export async function processPaymentWebhook(input: {
       };
     }
 
-    if (input.payment.fee > 0) {
+    // A payment for a pending (credit-sale) order settles its receivable;
+    // anything else is a standalone gateway fee capture.
+    const settled = input.payment.order_external_id
+      ? await settleReceivable(schema, input.storeId, input.payment.order_external_id)
+      : false;
+
+    if (input.payment.fee > 0 && !settled) {
       const entryNumber = await nextEntryNumber(schema);
       await persistEntries(schema, [
         createFeeEntry(
@@ -350,7 +485,9 @@ export async function processPaymentWebhook(input: {
     return {
       ok: true,
       eventType: input.eventType,
-      message,
+      message: settled
+        ? `Receivable settled for order ${input.payment.order_external_id} — cash collected, fees ${input.payment.fee.toFixed(2)} booked.`
+        : message,
     };
   } catch (error) {
     const schema = await resolveStoreSchema(input.storeId).catch(() => null);

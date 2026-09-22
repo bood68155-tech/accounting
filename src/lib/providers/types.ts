@@ -1,5 +1,7 @@
 import type { Order, OrderItem, OrderStatus, Platform } from "@/types";
 
+export type { OrderStatus };
+
 /**
  * Provider adapters normalize each platform's webhook/API payloads into a
  * canonical {@link NormalizedOrder} so the profit engine + double-entry

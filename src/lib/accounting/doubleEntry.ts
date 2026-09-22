@@ -119,6 +119,69 @@ export function createRefundEntry(order: Order, refundAmount: number, entryNumbe
 }
 
 /**
+ * Journal entry for a credit sale (order placed, payment not yet collected):
+ *
+ *   Dr  Accounts Receivable        total
+ *   Cr  Sales Revenue              subtotal
+ *   Cr  Shipping Revenue           shipping charged
+ *   Cr  Sales Tax Payable          tax collected
+ *   Dr  Discounts Given            discounts
+ *   Dr  Cost of Goods Sold         Σ unit_cost × qty
+ *   Cr  Inventory                  Σ unit_cost × qty
+ *
+ * The matching cash collection entry (`createPaymentCollectionEntry`) settles
+ * the receivable when the gateway reports the charge — no P&L double-count:
+ * revenue was recognized at sale time; only the balance sheet flips.
+ */
+export function createCreditSaleEntry(order: Order, entryNumber: number): JournalEntry {
+  const cogs = fullCogs(order);
+
+  return validateEntry({
+    store_id: order.store_id,
+    entry_number: entryNumber,
+    entry_date: order.ordered_at.slice(0, 10),
+    description: `Credit sale ${order.order_number} — ${order.customer_name}`,
+    reference: order.external_id,
+    source: "order",
+    status: "posted",
+    lines: [
+      line("1100", `Receivable for ${order.order_number}`, order.total_amount),
+      line("4400", `Discounts on ${order.order_number}`, order.discount_amount),
+      line("4000", `Product sales ${order.order_number}`, 0, order.subtotal),
+      line("4100", `Shipping charged ${order.order_number}`, 0, order.shipping_amount),
+      line("2100", `Sales tax collected ${order.order_number}`, 0, order.tax_amount),
+      line("5000", `COGS ${order.order_number} (${order.items.length} line items)`, cogs),
+      line("1200", `Inventory out for ${order.order_number}`, 0, cogs),
+    ],
+  });
+}
+
+/**
+ * Settle a credit sale: Dr Cash (net of gateway fee) + Dr fees, Cr AR.
+ * Posting this for an order that was already booked as a paid sale would
+ * double-count — only call it for receivable-backed orders.
+ */
+export function createPaymentCollectionEntry(
+  order: Order,
+  entryNumber: number,
+): JournalEntry {
+  return validateEntry({
+    store_id: order.store_id,
+    entry_number: entryNumber,
+    entry_date: new Date().toISOString().slice(0, 10),
+    description: `Payment collected for ${order.order_number} — ${order.customer_name}`,
+    reference: order.external_id,
+    source: "fee",
+    status: "posted",
+    lines: [
+      line("1000", `Cash received for ${order.order_number}`, order.total_amount - order.payment_fee),
+      line("5200", `Payment gateway fee on ${order.order_number}`, order.payment_fee),
+      line("1100", `Receivable settled ${order.order_number}`, 0, order.total_amount),
+    ],
+  });
+}
+
+/**
  * Journal entry for a standalone fee (e.g. a gateway payout fee, app fee,
  * or marketing expense posted manually).
  */
