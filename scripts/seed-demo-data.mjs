@@ -201,20 +201,23 @@ function generateOrders(storeId) {
 
 // ─── double-entry helpers (mirror of src/lib/accounting/doubleEntry.ts) ──────
 
+// journal_lines rejects all-zero rows; builders push every line and the
+// shared filter drops the zero-value ones before insert.
+const dropZeroLines = (lines) => lines.filter((l) => l.debit !== 0 || l.credit !== 0);
+
 function createSaleEntry(order, entryNumber) {
   const line = (account_code, account_name, account_type, debit, credit, description) => ({
     account_code, account_name, account_type, debit, credit, description,
   });
-  // Mirrors createSaleEntry in src/lib/accounting/doubleEntry.ts, skipping
-  // zero-value lines (journal_lines rejects all-zero rows).
+  // Mirrors createSaleEntry in src/lib/accounting/doubleEntry.ts.
   const lines = [];
   const cogs = round2(order.items.reduce((s, i) => s + i.line_cost, 0));
   lines.push(line("1000", "Cash", "asset", round2(order.total_amount - order.payment_fee), 0, `Net proceeds from ${order.order_number}`));
-  if (order.payment_fee > 0) lines.push(line("5200", "Payment Processing Fees", "expense", order.payment_fee, 0, `Payment gateway fee on ${order.order_number}`));
-  if (order.discount_amount > 0) lines.push(line("4400", "Discounts Given", "revenue", order.discount_amount, 0, `Discounts on ${order.order_number}`));
+  lines.push(line("5200", "Payment Processing Fees", "expense", order.payment_fee, 0, `Payment gateway fee on ${order.order_number}`));
+  lines.push(line("4400", "Discounts Given", "revenue", order.discount_amount, 0, `Discounts on ${order.order_number}`));
   lines.push(line("4000", "Sales Revenue", "revenue", 0, order.subtotal, `Product sales ${order.order_number}`));
-  if (order.shipping_amount > 0) lines.push(line("4100", "Shipping Revenue", "revenue", 0, order.shipping_amount, `Shipping charged ${order.order_number}`));
-  if (order.tax_amount > 0) lines.push(line("2100", "Sales Tax Payable", "liability", 0, order.tax_amount, `Sales tax collected ${order.order_number}`));
+  lines.push(line("4100", "Shipping Revenue", "revenue", 0, order.shipping_amount, `Shipping charged ${order.order_number}`));
+  lines.push(line("2100", "Sales Tax Payable", "liability", 0, order.tax_amount, `Sales tax collected ${order.order_number}`));
   lines.push(line("5000", "Cost of Goods Sold", "expense", cogs, 0, `COGS ${order.order_number} (${order.items.length} line items)`));
   lines.push(line("1200", "Inventory", "asset", 0, cogs, `Inventory out for ${order.order_number}`));
   return {
@@ -225,7 +228,7 @@ function createSaleEntry(order, entryNumber) {
     reference: order.external_id,
     source: "order",
     status: "posted",
-    lines,
+    lines: dropZeroLines(lines),
   };
 }
 
@@ -238,10 +241,10 @@ function createCreditSaleEntry(order, entryNumber) {
   const lines = [];
   const cogs = round2(order.items.reduce((s, i) => s + i.line_cost, 0));
   lines.push(line("1100", "Accounts Receivable", "asset", order.total_amount, 0, `Receivable for ${order.order_number}`));
-  if (order.discount_amount > 0) lines.push(line("4400", "Discounts Given", "revenue", order.discount_amount, 0, `Discounts on ${order.order_number}`));
+  lines.push(line("4400", "Discounts Given", "revenue", order.discount_amount, 0, `Discounts on ${order.order_number}`));
   lines.push(line("4000", "Sales Revenue", "revenue", 0, order.subtotal, `Product sales ${order.order_number}`));
-  if (order.shipping_amount > 0) lines.push(line("4100", "Shipping Revenue", "revenue", 0, order.shipping_amount, `Shipping charged ${order.order_number}`));
-  if (order.tax_amount > 0) lines.push(line("2100", "Sales Tax Payable", "liability", 0, order.tax_amount, `Sales tax collected ${order.order_number}`));
+  lines.push(line("4100", "Shipping Revenue", "revenue", 0, order.shipping_amount, `Shipping charged ${order.order_number}`));
+  lines.push(line("2100", "Sales Tax Payable", "liability", 0, order.tax_amount, `Sales tax collected ${order.order_number}`));
   lines.push(line("5000", "Cost of Goods Sold", "expense", cogs, 0, `COGS ${order.order_number} (${order.items.length} line items)`));
   lines.push(line("1200", "Inventory", "asset", 0, cogs, `Inventory out for ${order.order_number}`));
   return {
@@ -252,7 +255,7 @@ function createCreditSaleEntry(order, entryNumber) {
     reference: order.external_id,
     source: "order",
     status: "posted",
-    lines,
+    lines: dropZeroLines(lines),
   };
 }
 
@@ -278,7 +281,7 @@ function createRefundEntry(order, refundAmount, entryNumber) {
     reference: order.external_id,
     source: "refund",
     status: "posted",
-    lines,
+    lines: dropZeroLines(lines),
   };
 }
 

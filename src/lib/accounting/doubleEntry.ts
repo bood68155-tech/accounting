@@ -33,6 +33,15 @@ export function fullCogs(order: Order): number {
   return round2(order.items.reduce((sum, item) => sum + item.line_cost, 0));
 }
 
+/**
+ * Drop all-zero lines (0 debit AND 0 credit): journal_lines has a check
+ * constraint rejecting them, and zero-value lines carry no information.
+ * Applied automatically by every entry builder below.
+ */
+function dropZeroLines(lines: JournalLine[]): JournalLine[] {
+  return lines.filter((l) => l.debit !== 0 || l.credit !== 0);
+}
+
 /** Throws unless the entry is balanced (debits === credits). */
 export function validateEntry(entry: JournalEntry): JournalEntry {
   const debits = entry.lines.reduce((sum, l) => sum + l.debit, 0);
@@ -67,6 +76,17 @@ export function nextEntryNumber(entries: Array<Pick<JournalEntry, "entry_number"
 export function createSaleEntry(order: Order, entryNumber: number): JournalEntry {
   const cogs = fullCogs(order);
 
+  const lines: JournalLine[] = [
+    line("1000", `Net proceeds from ${order.order_number}`, order.total_amount - order.payment_fee),
+    line("5200", `Payment gateway fee on ${order.order_number}`, order.payment_fee),
+    line("4400", `Discounts on ${order.order_number}`, order.discount_amount),
+    line("4000", `Product sales ${order.order_number}`, 0, order.subtotal),
+    line("4100", `Shipping charged ${order.order_number}`, 0, order.shipping_amount),
+    line("2100", `Sales tax collected ${order.order_number}`, 0, order.tax_amount),
+  ];
+  lines.push(line("5000", `COGS ${order.order_number} (${order.items.length} line items)`, cogs));
+  lines.push(line("1200", `Inventory out for ${order.order_number}`, 0, cogs));
+
   return validateEntry({
     store_id: order.store_id,
     entry_number: entryNumber,
@@ -75,16 +95,7 @@ export function createSaleEntry(order: Order, entryNumber: number): JournalEntry
     reference: order.external_id,
     source: "order",
     status: "posted",
-    lines: [
-      line("1000", `Net proceeds from ${order.order_number}`, order.total_amount - order.payment_fee),
-      line("5200", `Payment gateway fee on ${order.order_number}`, order.payment_fee),
-      line("4400", `Discounts on ${order.order_number}`, order.discount_amount),
-      line("4000", `Product sales ${order.order_number}`, 0, order.subtotal),
-      line("4100", `Shipping charged ${order.order_number}`, 0, order.shipping_amount),
-      line("2100", `Sales tax collected ${order.order_number}`, 0, order.tax_amount),
-      line("5000", `COGS ${order.order_number} (${order.items.length} line items)`, cogs),
-      line("1200", `Inventory out for ${order.order_number}`, 0, cogs),
-    ],
+    lines: dropZeroLines(lines),
   });
 }
 
@@ -101,6 +112,13 @@ export function createRefundEntry(order: Order, refundAmount: number, entryNumbe
   const refundedShare = order.total_amount > 0 ? Math.min(1, refundAmount / order.total_amount) : 0;
   const cogsRefunded = round2(fullCogs(order) * refundedShare);
 
+  const lines: JournalLine[] = [
+    line("4500", `Refund issued for ${order.order_number}`, refundAmount),
+    line("1000", `Cash back to customer ${order.order_number}`, 0, refundAmount),
+    line("1200", `Returned inventory ${order.order_number}`, cogsRefunded),
+    line("5000", `COGS reversal for returned goods ${order.order_number}`, 0, cogsRefunded),
+  ];
+
   return validateEntry({
     store_id: order.store_id,
     entry_number: entryNumber,
@@ -109,12 +127,7 @@ export function createRefundEntry(order: Order, refundAmount: number, entryNumbe
     reference: order.external_id,
     source: "refund",
     status: "posted",
-    lines: [
-      line("4500", `Refund issued for ${order.order_number}`, refundAmount),
-      line("1000", `Cash back to customer ${order.order_number}`, 0, refundAmount),
-      line("1200", `Returned inventory ${order.order_number}`, cogsRefunded),
-      line("5000", `COGS reversal for returned goods ${order.order_number}`, 0, cogsRefunded),
-    ],
+    lines: dropZeroLines(lines),
   });
 }
 
@@ -136,6 +149,16 @@ export function createRefundEntry(order: Order, refundAmount: number, entryNumbe
 export function createCreditSaleEntry(order: Order, entryNumber: number): JournalEntry {
   const cogs = fullCogs(order);
 
+  const lines: JournalLine[] = [
+    line("1100", `Receivable for ${order.order_number}`, order.total_amount),
+    line("4400", `Discounts on ${order.order_number}`, order.discount_amount),
+    line("4000", `Product sales ${order.order_number}`, 0, order.subtotal),
+    line("4100", `Shipping charged ${order.order_number}`, 0, order.shipping_amount),
+    line("2100", `Sales tax collected ${order.order_number}`, 0, order.tax_amount),
+  ];
+  lines.push(line("5000", `COGS ${order.order_number} (${order.items.length} line items)`, cogs));
+  lines.push(line("1200", `Inventory out for ${order.order_number}`, 0, cogs));
+
   return validateEntry({
     store_id: order.store_id,
     entry_number: entryNumber,
@@ -144,15 +167,7 @@ export function createCreditSaleEntry(order: Order, entryNumber: number): Journa
     reference: order.external_id,
     source: "order",
     status: "posted",
-    lines: [
-      line("1100", `Receivable for ${order.order_number}`, order.total_amount),
-      line("4400", `Discounts on ${order.order_number}`, order.discount_amount),
-      line("4000", `Product sales ${order.order_number}`, 0, order.subtotal),
-      line("4100", `Shipping charged ${order.order_number}`, 0, order.shipping_amount),
-      line("2100", `Sales tax collected ${order.order_number}`, 0, order.tax_amount),
-      line("5000", `COGS ${order.order_number} (${order.items.length} line items)`, cogs),
-      line("1200", `Inventory out for ${order.order_number}`, 0, cogs),
-    ],
+    lines: dropZeroLines(lines),
   });
 }
 
@@ -173,11 +188,11 @@ export function createPaymentCollectionEntry(
     reference: order.external_id,
     source: "fee",
     status: "posted",
-    lines: [
+    lines: dropZeroLines([
       line("1000", `Cash received for ${order.order_number}`, order.total_amount - order.payment_fee),
       line("5200", `Payment gateway fee on ${order.order_number}`, order.payment_fee),
       line("1100", `Receivable settled ${order.order_number}`, 0, order.total_amount),
-    ],
+    ]),
   });
 }
 
