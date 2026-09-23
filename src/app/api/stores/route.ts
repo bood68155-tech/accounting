@@ -7,7 +7,7 @@ import type { Platform, StoreStatus } from "@/types";
 
 export const dynamic = "force-dynamic";
 
-const PLATFORMS: Platform[] = ["shopify", "woocommerce", "stripe", "paypal", "custom"];
+const PLATFORMS: Platform[] = ["shopify", "salla", "woocommerce", "stripe", "paypal", "custom"];
 
 /**
  * ── Connect a store ───────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -8,16 +9,17 @@ import { Label } from "@/components/ui/label";
 import { IconCheck, IconStore, IconWebhook } from "@/components/icons";
 import { cn } from "@/lib/utils";
 
-type Platform = "shopify" | "woocommerce" | "stripe" | "paypal";
+type Platform = "shopify" | "salla" | "woocommerce" | "stripe" | "paypal";
 
 const PLATFORMS: Array<{ id: Platform; name: string; blurb: string }> = [
   { id: "shopify", name: "Shopify", blurb: "Orders, refunds & Shopify Payments fees" },
+  { id: "salla", name: "Salla", blurb: "Salla orders via webhooks (SAR)" },
   { id: "woocommerce", name: "WooCommerce", blurb: "WordPress store orders" },
   { id: "stripe", name: "Stripe", blurb: "Payment gateway fees & payouts" },
   { id: "paypal", name: "PayPal", blurb: "Checkout orders & transaction fees" },
 ];
 
-const STEP_LABELS = ["Store details", "Webhook endpoint", "Done"];
+const STEP_LABELS = ["Store details", "Webhook endpoint"];
 
 interface ConnectedStore {
   id: string;
@@ -28,6 +30,7 @@ interface ConnectedStore {
 }
 
 export function StoreConnect({ onClose }: { onClose?: () => void }) {
+  const router = useRouter();
   const [step, setStep] = useState(0);
   const [platform, setPlatform] = useState<Platform>("shopify");
   const [name, setName] = useState("");
@@ -39,7 +42,7 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const webhookUrl = store && origin ? `${origin}/api/webhooks/${store.platform}?store_id=${store.id}` : "";
 
-  const canNext = step === 0 && name.trim().length > 0 && !saving;
+  const canContinue = step === 0 && name.trim().length > 0 && !saving;
 
   async function saveStore(): Promise<boolean> {
     setSaving(true);
@@ -73,9 +76,24 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
     if (step === 0) {
       const ok = await saveStore();
       if (ok) setStep(1);
-      return;
     }
-    setStep(step + 1);
+    // Step 1's primary action is Finish — see handleFinish.
+  }
+
+  /**
+   * Finish (webhook step): make sure the store is persisted (it normally
+   * already is from step 0 — this covers any edge where state was lost),
+   * then return to the stores list, refreshed so the new store shows up.
+   */
+  async function handleFinish() {
+    setError(null);
+    if (!store) {
+      const ok = await saveStore();
+      if (!ok) return;
+    }
+    onClose?.();
+    router.push("/stores");
+    router.refresh();
   }
 
   return (
@@ -164,21 +182,22 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
           </div>
         )}
 
-        {step === 1 && store && (
+        {step === 1 && (
           <div className="space-y-4">
             <div className="flex items-start gap-3 rounded-xl border border-sky-500/25 bg-sky-500/[0.06] p-3.5">
               <IconWebhook className="mt-0.5 h-4.5 w-4.5 shrink-0 text-sky-400" />
               <p className="text-xs leading-relaxed text-sky-200/90">
                 Create a webhook in your {PLATFORMS.find((p) => p.id === platform)?.name} admin and point it at this
-                endpoint (the store id is already included — Shopify sends it back as a query param). Signature
-                verification is handled server-side via <code className="font-mono">SHOPIFY_WEBHOOK_SECRET</code>.
+                endpoint (the store id is already included). Signature verification is handled server-side via the
+                platform&apos;s webhook secret (e.g. <code className="font-mono">SHOPIFY_WEBHOOK_SECRET</code>,{" "}
+                <code className="font-mono">SALLA_WEBHOOK_SECRET</code>).
               </p>
             </div>
             <div className="space-y-1.5">
               <Label>Webhook endpoint URL</Label>
               <div className="flex items-center gap-2">
                 <code className="flex-1 truncate rounded-xl border border-zinc-800 bg-zinc-950 px-3.5 py-2.5 font-mono text-[11px] text-emerald-300">
-                  {webhookUrl}
+                  {webhookUrl || "…"}
                 </code>
                 <Button
                   type="button"
@@ -194,19 +213,18 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
                 for the books to update automatically.
               </p>
             </div>
-          </div>
-        )}
 
-        {step === 2 && (
-          <div className="flex flex-col items-center py-6 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-emerald-500/15 ring-1 ring-emerald-500/40">
-              <IconCheck className="h-6 w-6 text-emerald-400" />
+            {error && (
+              <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>
+            )}
+
+            <div className="flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-3">
+              <IconCheck className="h-4 w-4 shrink-0 text-emerald-400" />
+              <p className="text-xs text-emerald-200/90">
+                <span className="font-medium">{store?.name ?? name}</span> is saved — Finish returns you to your stores
+                list. You can copy this URL and finish the platform setup any time.
+              </p>
             </div>
-            <h4 className="mt-4 text-base font-semibold text-zinc-50">Store connected 🎉</h4>
-            <p className="mt-1 max-w-xs text-xs leading-relaxed text-zinc-500">
-              <span className="font-medium text-zinc-300">{store?.name ?? name}</span> is now syncing. Incoming
-              webhooks will be recorded, posted to the general ledger, and appear in your income statement.
-            </p>
           </div>
         )}
       </div>
@@ -215,13 +233,13 @@ export function StoreConnect({ onClose }: { onClose?: () => void }) {
         <Button type="button" variant="ghost" size="sm" onClick={() => (step === 0 ? onClose?.() : setStep(step - 1))}>
           {step === 0 ? "Cancel" : "Back"}
         </Button>
-        {step < 2 ? (
-          <Button type="button" size="sm" disabled={!canNext} onClick={handleContinue}>
-            {saving ? "Saving…" : step === 0 ? "Continue" : "Finish"}
+        {step === 0 ? (
+          <Button type="button" size="sm" disabled={!canContinue} onClick={handleContinue}>
+            {saving ? "Saving…" : "Continue"}
           </Button>
         ) : (
-          <Button type="button" size="sm" onClick={onClose}>
-            Done
+          <Button type="button" size="sm" disabled={saving} onClick={handleFinish}>
+            {saving ? "Saving…" : "Finish"}
           </Button>
         )}
       </div>
