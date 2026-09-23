@@ -87,7 +87,8 @@ console.log("\n-- 1. Signature verification (HMAC-SHA256) ----------------------
 {
   const secret = "test-webhook-secret";
   const raw = JSON.stringify(richPayload);
-  const goodDigest = createHmac("sha256", secret).update(raw, "utf8").digest("hex");
+  // Shopify sends the signature BASE64-encoded (matching Shopify admin).
+  const goodDigest = createHmac("sha256", secret).update(raw, "utf8").digest("base64");
   check("valid HMAC accepted", verifyShopifyWebhook(raw, goodDigest, secret).valid);
   check("tampered HMAC rejected", !verifyShopifyWebhook(raw, "deadbeef", secret).valid);
   check("missing header rejected", !verifyShopifyWebhook(raw, null, secret).valid);
