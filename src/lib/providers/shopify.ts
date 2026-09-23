@@ -7,8 +7,11 @@ import { money } from "@/lib/providers/types";
 
 /**
  * ── Shopify adapter ───────────────────────────────────────────────────────────
- * Webhook: POST /api/webhooks/shopify  (orders/create, orders/refund…)
- * Verification: `X-Shopify-Hmac-SHA256` = HMAC-SHA256(secret, rawBody), hex.
+ * Webhook: POST /api/webhooks/shopify  (orders/create, orders/paid, orders/refund…)
+ * Verification: `X-Shopify-Hmac-SHA256` = base64(HMAC-SHA256(secret, rawBody)).
+ *
+ * Manual pull: GET orders from the Admin REST API with the same custom-app
+ * token (shpat_…) used for catalog sync.
  */
 
 export function verifyShopifyWebhook(
@@ -19,16 +22,20 @@ export function verifyShopifyWebhook(
   if (!hmacHeader) return { valid: false, reason: "Missing X-Shopify-Hmac-SHA256 header" };
   if (!secret) return { valid: false, reason: "SHOPIFY_WEBHOOK_SECRET is not configured" };
 
-  const digest = createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
-  const expected = Buffer.from(digest, "utf8");
-  const received = Buffer.from(hmacHeader, "utf8");
+  // Shopify sends the digest BASE64-ENCODED (not hex). Computing a hex digest
+  // here was the bug that made every real webhook fail with a length mismatch.
+  const expected = createHmac("sha256", secret).update(rawBody, "utf8").digest();
+  const received = Buffer.from(hmacHeader.trim(), "base64");
 
-  if (expected.length !== received.length) {
-    return { valid: false, reason: "HMAC length mismatch" };
+  if (received.length !== expected.length) {
+    return {
+      valid: false,
+      reason: `HMAC length mismatch (expected ${expected.length} bytes, got ${received.length} — header may not be base64)`,
+    };
   }
   return timingSafeEqual(expected, received)
     ? { valid: true }
-    : { valid: false, reason: "HMAC signature mismatch" };
+    : { valid: false, reason: "HMAC signature mismatch — SHOPIFY_WEBHOOK_SECRET differs from the secret set in Shopify admin" };
 }
 
 /** One catalog row extracted from the Shopify Admin API. */
@@ -133,6 +140,47 @@ export async function fetchShopifyProducts(
   }));
 }
 
+/** One raw order as returned by the Shopify Admin REST `orders.json` endpoint. */
+export type ShopifyAdminOrder = Record<string, unknown>;
+
+/**
+ * Fetch recent orders from the Shopify Admin REST API for manual syncing
+ * ("Sync Shopify Orders" on /orders). Same custom-app token as the catalog
+ * pull (shpat_…); follows Link-header pagination.
+ *
+ * `status=any` includes open + closed + cancelled orders so refunds and
+ * cancellations are captured, not just new sales.
+ */
+export async function fetchShopifyOrders(
+  domain: string,
+  token: string,
+  options: { limit?: number; days?: number } = {},
+): Promise<ShopifyAdminOrder[]> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 250);
+  const days = Math.min(Math.max(options.days ?? 30, 1), 365);
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+  const base = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}`;
+  const headers = { "X-Shopify-Access-Token": token };
+
+  const orders: ShopifyAdminOrder[] = [];
+  let url: string | null =
+    `${base}/orders.json?limit=${limit}&status=any&created_at_min=${encodeURIComponent(since)}`;
+
+  while (url) {
+    const res: Response = await fetch(url, { headers, cache: "no-store" });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`Shopify orders API ${res.status}: ${body.slice(0, 300)}`);
+    }
+    const data = (await res.json()) as { orders?: ShopifyAdminOrder[] };
+    orders.push(...(data.orders ?? []));
+    const link: string | null = res.headers.get("link");
+    url = link?.match(/<([^>]+)>; rel="next"/)?.[1] ?? null;
+  }
+
+  return orders;
+}
+
 interface ShopifyLineItem {
   id?: number;
   sku?: string | null;
@@ -162,14 +210,28 @@ interface ShopifyOrderPayload {
   total_shipping?: string;
   total_price?: string;
   financial_status?: string;
+  cancelled_at?: string | null;
+  closed_at?: string | null;
   created_at?: string;
   line_items?: ShopifyLineItem[];
   shipping_lines?: Array<{ price?: string }>;
   discount_codes?: Array<{ amount?: string }>;
   transactions?: ShopifyTransaction[];
+  refunds?: Array<{
+    created_at?: string;
+    transactions?: Array<{
+      kind?: string;
+      status?: string;
+      amount?: string;
+      gateway?: string;
+    }>;
+  }>;
 }
 
-/** Normalize a Shopify `orders/create` payload into a canonical order. */
+/**
+ * Normalize a Shopify order payload (webhook body or Admin REST order object)
+ * into a canonical order.
+ */
 export function normalizeShopifyOrder(payload: ShopifyOrderPayload): NormalizedOrder {
   const items = (payload.line_items ?? []).map((item) => {
     const quantity = Math.max(1, money(item.quantity, 1));
@@ -204,9 +266,33 @@ export function normalizeShopifyOrder(payload: ShopifyOrderPayload): NormalizedO
   const txn = (payload.transactions ?? []).find((t) => t.kind === "sale" || t.kind === "capture");
   const fee = txn ? round(money(txn.amount) - money(txn.net)) : 0;
 
+  // Refunds: sum refund transactions from the payload's `refunds` array
+  // (Admin REST) or a `total_refunded` field when present.
+  const refundTotal = round(
+    (payload.refunds ?? []).reduce(
+      (sum, refund) =>
+        sum +
+        (refund.transactions ?? [])
+          .filter((t) => t.kind === "refund" && t.status !== "failure")
+          .reduce((s, t) => s + money(t.amount), 0),
+      0,
+    ),
+  );
+
   const firstName = payload.customer?.first_name ?? "";
   const lastName = payload.customer?.last_name ?? "";
   const customerName = [firstName, lastName].filter(Boolean).join(" ") || payload.email || "Guest";
+
+  // Status precedence: cancelled > refunded > paid > pending.
+  const financial = payload.financial_status ?? "";
+  let status: NormalizedOrder["status"] = "pending";
+  if (financial === "paid" || financial === "partially_paid" || financial === "captured") status = "paid";
+  if (financial === "refunded") status = "refunded";
+  if (financial === "partially_refunded") status = "partially_refunded";
+  if (financial === "voided") status = "cancelled"; // payment never captured — no revenue
+  if (refundTotal > 0 && refundTotal >= total && total > 0) status = "refunded";
+  else if (refundTotal > 0 && status === "paid") status = "partially_refunded";
+  if (payload.cancelled_at) status = "cancelled";
 
   return {
     external_id: String(payload.id ?? ""),
@@ -221,8 +307,8 @@ export function normalizeShopifyOrder(payload: ShopifyOrderPayload): NormalizedO
     payment_gateway: txn?.gateway ?? "shopify-payments",
     payment_fee: fee,
     shipping_cost: 0, // filled from store config when known
-    refund_amount: 0,
-    status: payload.financial_status === "paid" ? "paid" : "pending",
+    refund_amount: refundTotal,
+    status,
     ordered_at: payload.created_at ?? new Date().toISOString(),
     items,
   };

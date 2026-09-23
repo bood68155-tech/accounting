@@ -12,21 +12,38 @@ export const dynamic = "force-dynamic";
  *   2. nothing at all — the store is resolved from the `X-Shopify-Shop-Domain`
  *      header Shopify sends with every webhook (cross-tenant lookup by domain).
  *
- * Signature: `X-Shopify-Hmac-SHA256` = HMAC-SHA256(SHOPIFY_WEBHOOK_SECRET, body).
+ * Signature: `X-Shopify-Hmac-SHA256` = base64(HMAC-SHA256(SHOPIFY_WEBHOOK_SECRET, body)).
  * The raw body is read BEFORE JSON parsing so verification covers exact bytes.
+ *
+ * Every failure mode is logged with a `[shopify-webhook]` prefix so it shows up
+ * in `vercel logs` / server console: bad signatures, unknown stores, parse
+ * errors, and order-save failures.
  */
 
 function storeIdFrom(request: NextRequest): string | null {
   return request.nextUrl.searchParams.get("store_id") ?? request.headers.get("x-store-id");
 }
 
+/** Topics we book; anything else is acked 200 without processing. */
+const SUPPORTED_TOPICS = new Set(["orders/create", "orders/paid", "orders/updated", "orders/cancelled", "orders/refund"]);
+
 export async function POST(request: NextRequest) {
   const rawBody = await request.text();
+  const topic = request.headers.get("x-shopify-topic") ?? "unknown";
+  const shopDomain = request.headers.get("x-shopify-shop-domain") ?? "unknown";
+  const webhookId = request.headers.get("x-shopify-webhook-id") ?? "unknown";
+
+  console.log(
+    `[shopify-webhook] received topic=${topic} shop=${shopDomain} webhook_id=${webhookId} bytes=${rawBody.length}`,
+  );
 
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(rawBody);
   } catch {
+    console.error(
+      `[shopify-webhook] FAILED to parse JSON body — topic=${topic} shop=${shopDomain} body[:200]=${rawBody.slice(0, 200)}`,
+    );
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
@@ -39,6 +56,14 @@ export async function POST(request: NextRequest) {
   );
 
   if (!verification.valid) {
+    // Signature failures MUST be loud — they mean either a secret mismatch or
+    // someone probing the endpoint. Show up in Vercel logs with full context.
+    console.error(
+      `[shopify-webhook] SIGNATURE VERIFICATION FAILED — reason="${verification.reason}" ` +
+        `topic=${topic} shop=${shopDomain} webhook_id=${webhookId} ` +
+        `secretConfigured=${Boolean(process.env.SHOPIFY_WEBHOOK_SECRET)} ` +
+        `receivedHmac=${(request.headers.get("x-shopify-hmac-sha256") ?? "").slice(0, 12)}…`,
+    );
     const configured = Boolean(process.env.SHOPIFY_WEBHOOK_SECRET);
     return NextResponse.json(
       {
@@ -50,13 +75,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Ignore topics we don't book (webhooks/ping, products/*, app/uninstalled…).
+  if (!SUPPORTED_TOPICS.has(topic)) {
+    console.log(`[shopify-webhook] ignored topic=${topic} (not an order event)`);
+    return NextResponse.json({ ok: true, ignored: true, topic });
+  }
+
   // Resolve the target store: explicit id wins, then the shop domain header.
   let storeId = storeIdFrom(request);
-  if (!storeId) {
-    const shopDomain = request.headers.get("x-shopify-shop-domain");
-    if (shopDomain) {
-      const resolved = await resolveStoreByDomain(shopDomain);
-      if (resolved) storeId = resolved.storeId;
+  if (!storeId && shopDomain !== "unknown") {
+    const resolved = await resolveStoreByDomain(shopDomain);
+    if (resolved) {
+      storeId = resolved.storeId;
+      console.log(`[shopify-webhook] resolved shop=${shopDomain} → store=${storeId}`);
+    } else {
+      console.error(
+        `[shopify-webhook] UNKNOWN STORE — shop=${shopDomain} is not connected in the app. ` +
+          `Connect the store (domain must match exactly) or pass ?store_id=<uuid> in the webhook URL.`,
+      );
     }
   }
   if (!storeId) {
@@ -70,25 +106,43 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const normalized = normalizeShopifyOrder(payload);
+  // Log a compact summary of the incoming order (full payload is stored in the
+  // integration_events table; this line makes Vercel logs useful at a glance).
+  const orderName = typeof payload.name === "string" ? payload.name : `#${String(payload.id ?? "?")}`;
+  console.log(
+    `[shopify-webhook] order ${orderName} — financial_status=${String(payload.financial_status ?? "?")} ` +
+      `total=${String(payload.total_price ?? "?")} ${String(payload.currency ?? "")} line_items=${Array.isArray(payload.line_items) ? payload.line_items.length : 0}`,
+  );
+
+  const normalized = normalizeShopifyOrder(payload as never);
   const result = await processOrderWebhook({
     provider: "shopify",
     storeId,
     storeCurrency: String(payload.currency ?? "USD"),
     normalized,
-    eventType: request.headers.get("x-shopify-topic") ?? "orders/create",
+    eventType: topic,
     rawPayload: payload,
   });
 
-  return NextResponse.json(result, { status: result.ok ? 200 : 500 });
+  if (!result.ok) {
+    // Order failed to save — print the reason (already recorded in
+    // integration_events with the full payload by the ingest pipeline).
+    console.error(
+      `[shopify-webhook] ORDER SAVE FAILED — order=${orderName} store=${storeId} topic=${topic}: ${result.message}`,
+    );
+    return NextResponse.json(result, { status: 500 });
+  }
+
+  console.log(`[shopify-webhook] order ${orderName} processed: ${result.message}`);
+  return NextResponse.json(result, { status: 200 });
 }
 
 export async function GET() {
   return NextResponse.json({
     name: "Shopify webhook endpoint",
     expectedHeaders: ["X-Shopify-Hmac-SHA256", "X-Shopify-Shop-Domain", "X-Shopify-Topic"],
-    events: ["orders/create", "orders/refund"],
+    events: ["orders/create", "orders/paid", "orders/updated", "orders/cancelled", "orders/refund"],
     storeResolution: "?store_id=<uuid> (or X-Store-Id), else X-Shopify-Shop-Domain lookup",
-    hint: "Create the webhook in Shopify admin with a secret matching SHOPIFY_WEBHOOK_SECRET.",
+    hint: "Create the webhook in Shopify admin with a secret matching SHOPIFY_WEBHOOK_SECRET. Signature is base64(HMAC-SHA256(secret, rawBody)).",
   });
 }

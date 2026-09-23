@@ -37,6 +37,8 @@ import { round2 } from "@/lib/utils";
 export interface IngestResult {
   ok: boolean;
   eventType: string;
+  /** true when the order was newly persisted (false = idempotent skip/settle). */
+  upserted?: boolean;
   order?: Order;
   profit?: ProfitBreakdown;
   entryNumbers?: number[];
@@ -117,12 +119,20 @@ async function persistOrder(
   const t = getTenantTables(schema);
 
   const existing = await db
-    .select({ id: t.orders.id, entryNumbers: t.orders.entryNumbers })
+    .select({
+      id: t.orders.id,
+      status: t.orders.status,
+      entryNumbers: t.orders.entryNumbers,
+    })
     .from(t.orders)
     .where(and(eq(t.orders.storeId, order.store_id), eq(t.orders.externalId, order.external_id)))
     .limit(1);
   if (existing.length > 0) {
-    return { upserted: false, entryNumbers: existing[0].entryNumbers ?? [] };
+    return {
+      upserted: false,
+      entryNumbers: existing[0].entryNumbers ?? [],
+      existingStatus: existing[0].status,
+    };
   }
 
   // The order id is generated up front so the order + item inserts can run as
@@ -165,7 +175,7 @@ async function persistOrder(
     ] as never,
   );
 
-  return { upserted: true, entryNumbers: [] as number[] };
+  return { upserted: true, entryNumbers: [] as number[], existingStatus: null };
 }
 
 async function persistEntries(schema: string, entries: JournalEntry[]) {
@@ -387,8 +397,36 @@ export async function processOrderWebhook(input: {
     order = await enrichWithCatalogCosts(schema, input.storeId, order);
     profit = computeOrderProfit(order);
 
-    const { upserted, entryNumbers: existingNumbers } = await persistOrder(schema, order, input.rawPayload);
-    const entryNumbers = upserted ? await postEntriesForOrder(schema, order) : existingNumbers;
+    const { upserted, entryNumbers: existingNumbers, existingStatus } = await persistOrder(
+      schema,
+      order,
+      input.rawPayload,
+    );
+
+    let entryNumbers: number[];
+    let message: string;
+
+    if (upserted) {
+      // Cancelled orders (voided/uncaptured payments) are persisted for
+      // record-keeping but post NO journal entries — no revenue is recognized.
+      entryNumbers = order.status === "cancelled" ? [] : await postEntriesForOrder(schema, order);
+      message = order.status === "cancelled"
+        ? `Order ${order.order_number} recorded as cancelled — no journal entries (no revenue recognized).`
+        : `Order ${order.order_number} processed — true net profit ${profit.net_profit.toFixed(2)}, ${entryNumbers.length} journal entr${entryNumbers.length === 1 ? "y" : "ies"} posted.`;
+    } else if (existingStatus === "pending" && order.status === "paid") {
+      // A previously credit-sale order whose payment event just arrived (e.g.
+      // Shopify orders/paid after orders/create): settle the receivable instead
+      // of silently treating the delivery as a duplicate.
+      const settled = await settleReceivable(schema, input.storeId, order.external_id);
+      entryNumbers = existingNumbers;
+      message = settled
+        ? `Payment received for order ${order.order_number} — receivable settled (Dr Cash, Cr Accounts Receivable).`
+        : `Order ${order.order_number} already synced — receivable was already settled.`;
+    } else {
+      // Idempotent redelivery (Shopify retries webhooks) — not an error.
+      entryNumbers = existingNumbers;
+      message = `Order ${order.order_number} already synced — no changes (idempotent skip).`;
+    }
 
     await logEvent(schema, {
       storeId: input.storeId,
@@ -401,12 +439,18 @@ export async function processOrderWebhook(input: {
     return {
       ok: true,
       eventType: input.eventType,
+      upserted,
       order,
       profit,
       entryNumbers,
-      message: `Order ${order.order_number} processed — true net profit ${profit.net_profit.toFixed(2)}, ${entryNumbers.length} journal entr${entryNumbers.length === 1 ? "y" : "ies"} posted.`,
+      message,
     };
   } catch (error) {
+    // Loud failure log: shows up in Vercel / server console with the cause.
+    console.error(
+      `[ingest] ${input.provider} order ${input.normalized.order_number} FAILED to save:`,
+      error,
+    );
     const schema = await resolveStoreSchema(input.storeId).catch(() => null);
     await logEvent(schema, {
       storeId: input.storeId,
@@ -490,6 +534,10 @@ export async function processPaymentWebhook(input: {
         : message,
     };
   } catch (error) {
+    console.error(
+      `[ingest] ${input.provider} payment ${input.payment.external_id} FAILED to process:`,
+      error,
+    );
     const schema = await resolveStoreSchema(input.storeId).catch(() => null);
     await logEvent(schema, {
       storeId: input.storeId,
