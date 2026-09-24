@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { tenantDb, getTenantTables } from "@/lib/db";
 import { buildReversalEntry } from "@/lib/accounting/doubleEntry";
 import type { JournalEntry } from "@/types";
@@ -212,18 +212,23 @@ export async function reverseEntry(
 }
 
 /**
- * Auto-reversal used by the webhook path: an `orders/cancelled` event for an
- * order that already posted journal entries reverses every entry linked to
- * that order (via the order's entry_numbers). Returns the count reversed.
+ * Auto-reversal used by the webhook path: an `orders/cancelled` (or Salla
+ * order.cancelled) event for an order that already posted journal entries
+ * reverses EVERY posted entry referencing that order — the sale, the payment
+ * collection (receivable settlement) and any refund entries — so every
+ * account (AR, Cash, Revenue, Tax…) nets back to zero, not just the ledger
+ * total. Entries are found by the order's external id in the entry reference
+ * (sale/refund entries carry it directly; collection entries fall back to it
+ * when no gateway payment id exists). Reversal entries themselves are
+ * excluded (reversal_of IS NOT NULL) and the chain guard rejects re-reversal.
  */
 export async function reverseEntriesForOrder(
   schema: string,
   storeId: string,
   orderExternalId: string,
-  entryNumbers: number[],
+  _entryNumbers: number[],
   reason: string,
 ): Promise<number> {
-  if (entryNumbers.length === 0) return 0;
   const db = tenantDb(schema);
   const t = getTenantTables(schema);
 
@@ -233,16 +238,18 @@ export async function reverseEntriesForOrder(
     .where(
       and(
         eq(t.journalEntries.storeId, storeId),
-        inArray(t.journalEntries.entryNumber, entryNumbers),
+        eq(t.journalEntries.reference, orderExternalId),
       ),
     );
 
   let reversed = 0;
   for (const row of rows) {
     if (row.status !== "posted") continue; // safety: only posted entries
+    const original = await getPostedEntryById(schema, storeId, row.id);
+    if (!original || original.reversal_of) continue; // never reverse a reversal
     const result = await reverseEntry(schema, storeId, row.id, reason);
     if (result.ok && !result.alreadyReversed) reversed += 1;
   }
-  void orderExternalId; // kept for log context at call sites
+  void _entryNumbers; // kept for API compatibility (order row may list some)
   return reversed;
 }

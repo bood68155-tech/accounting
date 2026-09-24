@@ -128,6 +128,7 @@ async function persistOrder(
       id: t.orders.id,
       status: t.orders.status,
       entryNumbers: t.orders.entryNumbers,
+      refundAmount: t.orders.refundAmount,
     })
     .from(t.orders)
     .where(and(eq(t.orders.storeId, order.store_id), eq(t.orders.externalId, order.external_id)))
@@ -137,6 +138,7 @@ async function persistOrder(
       upserted: false,
       entryNumbers: existing[0].entryNumbers ?? [],
       existingStatus: existing[0].status,
+      existingRefundAmount: existing[0].refundAmount,
     };
   }
 
@@ -180,7 +182,7 @@ async function persistOrder(
     ] as never,
   );
 
-  return { upserted: true, entryNumbers: [] as number[], existingStatus: null };
+  return { upserted: true, entryNumbers: [] as number[], existingStatus: null, existingRefundAmount: 0 };
 }
 
 // persistEntries and nextEntryNumber live in @/lib/accounting/ledger and are
@@ -363,7 +365,7 @@ export async function processOrderWebhook(input: {
     order = await enrichWithCatalogCosts(schema, input.storeId, order);
     profit = computeOrderProfit(order);
 
-    const { upserted, entryNumbers: existingNumbers, existingStatus } = await persistOrder(
+    const { upserted, entryNumbers: existingNumbers, existingStatus, existingRefundAmount } = await persistOrder(
       schema,
       order,
       input.rawPayload,
@@ -394,6 +396,51 @@ export async function processOrderWebhook(input: {
       message = reversed > 0
         ? `Order ${order.order_number} cancelled — ${reversed} journal entr${reversed === 1 ? "y" : "ies"} auto-reversed (Dr↔Cr swap).`
         : `Order ${order.order_number} cancelled — nothing to reverse (entries not posted or already reversed).`;
+    } else if (order.refund_amount > 0 && existingStatus !== "cancelled" && existingStatus !== "refunded") {
+      // Refund event (Salla order.refunded / Shopify orders/refund) for an
+      // order that already synced: book the refund against the PREVIOUSLY
+      // posted sale — update the order row and append the refund journal
+      // entry (Dr Refunds Given, Cr Cash, COGS reversed pro-rata).
+      // Idempotent by amount: a redelivered refund with the same total is a
+      // no-op (delta ≤ 0), so gateway retries never double-post.
+      const t2 = getTenantTables(schema);
+      const delta = round2(order.refund_amount - (existingRefundAmount ?? 0));
+      if (delta > 0.004 && (existingStatus === "paid" || existingStatus === "partially_refunded")) {
+        const refundEntryNumber = await nextEntryNumber(schema);
+        await persistEntries(schema, [createRefundEntry(order, delta, refundEntryNumber)]);
+        await tenantDb(schema)
+          .update(t2.orders)
+          .set({
+            refundAmount: order.refund_amount,
+            status: order.status,
+            entryNumbers: [...existingNumbers, refundEntryNumber],
+          })
+          .where(
+            and(
+              eq(t2.orders.storeId, input.storeId),
+              eq(t2.orders.externalId, order.external_id),
+            ),
+          );
+        entryNumbers = [...existingNumbers, refundEntryNumber];
+        message = `Refund recorded for ${order.order_number} — ${delta.toFixed(2)} ${order.currency} refunded (COGS reversed pro-rata).`;
+      } else if (delta > 0.004) {
+        // Refund on an unpaid (credit-sale) order: no cash moved yet, so only
+        // the order row changes — the receivable is voided with the cancel flow.
+        await tenantDb(schema)
+          .update(t2.orders)
+          .set({ refundAmount: order.refund_amount, status: order.status })
+          .where(
+            and(
+              eq(t2.orders.storeId, input.storeId),
+              eq(t2.orders.externalId, order.external_id),
+            ),
+          );
+        entryNumbers = existingNumbers;
+        message = `Refund recorded for ${order.order_number} — unpaid credit sale, no cash movement journaled.`;
+      } else {
+        entryNumbers = existingNumbers;
+        message = `Refund for ${order.order_number} already recorded — idempotent skip.`;
+      }
     } else if (existingStatus === "pending" && order.status === "paid") {
       // A previously credit-sale order whose payment event just arrived (e.g.
       // Shopify orders/paid after orders/create): settle the receivable instead
