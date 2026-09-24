@@ -131,6 +131,10 @@ export interface JournalEntry {
   status: EntryStatus;
   lines: JournalLine[];
   created_at?: string;
+  /** Present on entries that reverse another entry (the original's id). */
+  reversal_of?: string | null;
+  /** Human-readable reason captured when a reversal is posted. */
+  reversal_reason?: string | null;
 }
 
 export interface IncomeStatement {

@@ -246,6 +246,46 @@ export function createFeeEntry(
   });
 }
 
+/**
+ * Build the ERPNext-style reversal of a posted entry: every line is swapped
+ * (debit ↔ credit, same accounts) and the new entry links back via
+ * `reversal_of` with the captured reason. The reversal carries today's date —
+ * it is a NEW transaction correcting the books as of now, never a rewrite of
+ * history (which the DB immutability triggers forbid).
+ *
+ * Callers then `postReversalEntry` (persist + original status flip). Nothing
+ * here touches the database, so the builder is trivially testable.
+ */
+export function buildReversalEntry(
+  original: JournalEntry & { id: string },
+  nextNumber: number,
+  reason: string,
+): JournalEntry {
+  if (original.status !== "posted") {
+    throw new Error(`Entry #${original.entry_number} is not posted — nothing to reverse.`);
+  }
+  if (!reason.trim()) {
+    throw new Error("A reversal reason is required (audit trail).");
+  }
+
+  const lines = original.lines.map((l) =>
+    line(l.account_code, `${l.description} — reversal`, l.credit, l.debit),
+  );
+
+  return validateEntry({
+    store_id: original.store_id,
+    entry_number: nextNumber,
+    entry_date: new Date().toISOString().slice(0, 10),
+    description: `Reversal of entry #${original.entry_number}: ${reason}`.slice(0, 500),
+    reference: original.reference,
+    source: "adjustment",
+    status: "posted",
+    lines,
+    reversal_of: original.id,
+    reversal_reason: reason.trim(),
+  });
+}
+
 export interface AccountBalance {
   account_code: string;
   account_name: string;

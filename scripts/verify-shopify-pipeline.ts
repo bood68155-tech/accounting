@@ -21,6 +21,7 @@ import {
   createCreditSaleEntry,
   createPaymentCollectionEntry,
   createRefundEntry,
+  buildReversalEntry,
   validateEntry,
   line,
 } from "@/lib/accounting/doubleEntry";
@@ -257,6 +258,55 @@ console.log("\n-- 6. Payment reference audit trail -----------------------------
   check("collection: Cr AR full amount", approx(collByCode.get("1100")!.credit, order.total_amount));
   check("collection: Dr Cash net of fee",
     approx(collByCode.get("1000")!.debit, order.total_amount - order.payment_fee));
+}
+
+console.log("\n-- 7. Reversal builder (ERPNext-style cancellation) --------------------------");
+{
+  const sale = createSaleEntry(order, 20);
+  const reversal = buildReversalEntry({ ...sale, id: "11111111-1111-1111-1111-111111111111" }, 21, "duplicate import");
+
+  check("reversal is balanced",
+    approx(lineTotal(reversal, "debit"), lineTotal(reversal, "credit")));
+  check("reversal nets to zero against original",
+    approx(
+      lineTotal(reversal, "debit") - lineTotal(reversal, "credit"),
+      lineTotal(sale, "credit") - lineTotal(sale, "debit"),
+    ));
+  check("reversal links to original via reversal_of",
+    reversal.reversal_of === "11111111-1111-1111-1111-111111111111");
+  check("reversal carries the reason", reversal.reversal_reason === "duplicate import");
+  check("reversal source is adjustment", reversal.source === "adjustment");
+  check("reversal keeps the original reference", reversal.reference === sale.reference);
+
+  // Every line is swapped on the same account.
+  const origByCode = new Map(sale.lines.map((l) => [l.account_code, l]));
+  const revByCode = new Map(reversal.lines.map((l) => [l.account_code, l]));
+  check("same accounts as original", origByCode.size === revByCode.size);
+  let allSwapped = true;
+  for (const [code, orig] of origByCode) {
+    const rev = revByCode.get(code);
+    if (!rev || !approx(rev.debit, orig.credit) || !approx(rev.credit, orig.debit)) allSwapped = false;
+  }
+  check("every line Dr↔Cr swapped on the same account", allSwapped);
+
+  // Guards.
+  let reasonThrew = false;
+  try {
+    buildReversalEntry({ ...sale, id: "x" }, 22, "   ");
+  } catch { reasonThrew = true; }
+  check("reversal without reason rejected", reasonThrew);
+
+  let draftThrew = false;
+  try {
+    buildReversalEntry({ ...sale, id: "x", status: "draft" }, 23, "nope");
+  } catch { draftThrew = true; }
+  check("reversal of non-posted entry rejected", draftThrew);
+
+  // Reversing a reversal entry must be impossible via chain guard in ledger.ts;
+  // at the builder level a reversal of a reversal would simply swap again —
+  // verify the builder result is again balanced.
+  const revOfRev = buildReversalEntry(reversal as never, 24, "should not happen in prod");
+  check("builder output always balanced", approx(lineTotal(revOfRev, "debit"), lineTotal(revOfRev, "credit")));
 }
 
 console.log(`\n${failed === 0 ? "PASS" : "FAIL"}: ${passed} passed, ${failed} failed`

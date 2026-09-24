@@ -194,6 +194,10 @@ function buildTenantTables(name: string) {
       source: entrySourceEnum("source").notNull().default("manual"),
       status: entryStatusEnum("status").notNull().default("posted"),
       createdBy: uuid("created_by").references(() => users.id),
+      /** Id of the entry this one reverses (ERPNext-style cancellation). */
+      reversalOf: uuid("reversal_of"),
+      /** Reason captured when the reversal was posted. */
+      reversalReason: text("reversal_reason"),
       createdAt: createdAt(),
       postedAt: timestamp("posted_at", { withTimezone: true }).notNull().defaultNow(),
     },

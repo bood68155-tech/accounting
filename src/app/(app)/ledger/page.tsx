@@ -9,6 +9,7 @@ import {
   entriesTotalDebits,
 } from "@/lib/accounting/doubleEntry";
 import { fetchLedger } from "@/lib/data/repository";
+import { ReversalButton } from "@/components/reversal-button";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import type { EntrySource } from "@/types";
 
@@ -148,13 +149,22 @@ export default async function LedgerPage() {
               {[...entries].reverse().map((entry) => {
                 const entryDebits = entry.lines.reduce((s, l) => s + l.debit, 0);
                 const entryCredits = entry.lines.reduce((s, l) => s + l.credit, 0);
+                const isReversal = Boolean(entry.reversal_of);
                 return (
-                  <details key={entry.id ?? entry.entry_number} className="group rounded-xl border border-zinc-800 bg-zinc-900/40 transition-colors open:border-zinc-700 hover:border-zinc-700">
+                  <details key={entry.id ?? entry.entry_number} className={`group rounded-xl border bg-zinc-900/40 transition-colors open:border-zinc-700 hover:border-zinc-700 ${isReversal ? "border-amber-500/40" : "border-zinc-800"}`}>
                     <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-4 py-3 [&::-webkit-details-marker]:hidden">
                       <span className="font-mono text-xs font-semibold text-emerald-400">
                         JE-{String(entry.entry_number).padStart(4, "0")}
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-200">{entry.description}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-200">
+                        {entry.description}
+                        {entry.reversal_reason && (
+                          <span className="ml-2 text-xs text-amber-400/80" title={entry.reversal_reason}>
+                            · {entry.reversal_reason}
+                          </span>
+                        )}
+                      </span>
+                      {isReversal && <Badge variant="warning">reversal</Badge>}
                       <Badge variant={SOURCE_VARIANTS[entry.source] ?? "neutral"}>{SOURCE_LABELS[entry.source] ?? entry.source}</Badge>
                       <span className="hidden text-xs text-zinc-500 sm:block">{formatDate(entry.entry_date)}</span>
                       <span className="text-xs text-zinc-500">Ref {entry.reference}</span>
@@ -199,6 +209,15 @@ export default async function LedgerPage() {
                               {formatCurrency(entryCredits)}
                             </TCell>
                           </TRow>
+                          {entry.status === "posted" && !entry.reversal_of && (
+                            <TRow className="border-0 bg-transparent">
+                              <TCell className="py-3" colSpan={4}>
+                                <div className="flex justify-end">
+                                  <ReversalButton entryId={entry.id!} entryNumber={entry.entry_number} />
+                                </div>
+                              </TCell>
+                            </TRow>
+                          )}
                         </TBody>
                       </Table>
                     </div>

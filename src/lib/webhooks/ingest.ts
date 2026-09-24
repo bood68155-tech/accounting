@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, desc, inArray } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { JournalEntry, Order, ProfitBreakdown } from "@/types";
 import { toOrder, type NormalizedOrder, type NormalizedPayment } from "@/lib/providers/types";
 import { computeOrderProfit } from "@/lib/accounting/profitEngine";
@@ -18,6 +18,11 @@ import {
   tenantDb,
   getTenantTables,
 } from "@/lib/db";
+import {
+  nextEntryNumber,
+  persistEntries,
+  reverseEntriesForOrder,
+} from "@/lib/accounting/ledger";
 import { round2 } from "@/lib/utils";
 
 /**
@@ -178,50 +183,8 @@ async function persistOrder(
   return { upserted: true, entryNumbers: [] as number[], existingStatus: null };
 }
 
-async function persistEntries(schema: string, entries: JournalEntry[]) {
-  if (entries.length === 0) return;
-  const db = tenantDb(schema);
-  const t = getTenantTables(schema);
-
-  for (const entry of entries) {
-    const entryId = randomUUID();
-    await db.batch(
-      [
-        db.insert(t.journalEntries).values({
-          id: entryId,
-          storeId: entry.store_id,
-          entryNumber: entry.entry_number,
-          entryDate: entry.entry_date,
-          description: entry.description,
-          reference: entry.reference,
-          source: entry.source,
-          status: entry.status,
-        }),
-        ...entry.lines.map((line) =>
-          db.insert(t.journalLines).values({
-            entryId,
-            accountCode: line.account_code,
-            accountName: line.account_name,
-            accountType: line.account_type,
-            description: line.description,
-            debit: line.debit,
-            credit: line.credit,
-          }),
-        ),
-      ] as never,
-    );
-  }
-}
-
-async function nextEntryNumber(schema: string): Promise<number> {
-  const t = getTenantTables(schema);
-  const rows = await tenantDb(schema)
-    .select({ entryNumber: t.journalEntries.entryNumber })
-    .from(t.journalEntries)
-    .orderBy(desc(t.journalEntries.entryNumber))
-    .limit(1);
-  return (rows[0]?.entryNumber ?? 0) + 1;
-}
+// persistEntries and nextEntryNumber live in @/lib/accounting/ledger and are
+// shared with the manual reversal flow.
 
 /**
  * Post the sale journal entries for an order. Orders that arrive unpaid
@@ -416,6 +379,21 @@ export async function processOrderWebhook(input: {
       message = order.status === "cancelled"
         ? `Order ${order.order_number} recorded as cancelled — no journal entries (no revenue recognized).`
         : `Order ${order.order_number} processed — true net profit ${profit.net_profit.toFixed(2)}, ${entryNumbers.length} journal entr${entryNumbers.length === 1 ? "y" : "ies"} posted.`;
+    } else if (order.status === "cancelled" && existingStatus !== "cancelled") {
+      // ERPNext-style cancellation: an orders/cancelled webhook for an order
+      // that ALREADY posted entries reverses them (equal-and-opposite entries
+      // linked via reversal_of). Idempotent — redeliveries are skipped.
+      const reversed = await reverseEntriesForOrder(
+        schema,
+        input.storeId,
+        order.external_id,
+        existingNumbers,
+        `Order ${order.order_number} cancelled (orders/cancelled webhook)`,
+      );
+      entryNumbers = existingNumbers;
+      message = reversed > 0
+        ? `Order ${order.order_number} cancelled — ${reversed} journal entr${reversed === 1 ? "y" : "ies"} auto-reversed (Dr↔Cr swap).`
+        : `Order ${order.order_number} cancelled — nothing to reverse (entries not posted or already reversed).`;
     } else if (existingStatus === "pending" && order.status === "paid") {
       // A previously credit-sale order whose payment event just arrived (e.g.
       // Shopify orders/paid after orders/create): settle the receivable instead
