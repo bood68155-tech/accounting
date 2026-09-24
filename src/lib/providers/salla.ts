@@ -161,30 +161,68 @@ interface SallaOrderItem {
     price_without_tax?: SallaMoney;
     price_with_tax?: SallaMoney;
     cost_real?: SallaMoney;
+    total_discount?: SallaMoney;
     /** Webhook v2 nests totals under `item.amounts`. */
     total?: SallaMoney;
   };
   product?: { id?: number | string; sku?: string | null };
 }
 
+/**
+ * Salla status field: `{ id, name (localized — often Arabic), slug }`. The
+ * slug is the only reliable key (e.g. "under_review", "canceled", "paid").
+ */
+interface SallaOrderStatus {
+  id?: number;
+  name?: unknown;
+  slug?: string;
+}
+
 interface SallaOrderPayload {
   id?: number | string;
   reference_id?: number | string;
   date?: { date?: string } | string;
-  status?: { id?: number; name?: unknown } | string;
+  status?: SallaOrderStatus | string;
   payment_method?: string;
   currency?: SallaMoney | string;
   amounts?: {
     sub_total?: SallaMoney;
     shipping_cost?: SallaMoney;
+    cash_on_delivery?: SallaMoney;
+    /** v2: discounts are an ARRAY of { title, code, discount: "5.00" } */
+    discounts?: Array<{ discount?: string | number; discounted_shipping?: number }>;
+    /** v1/legacy: single discount money field. */
     discount?: SallaMoney;
-    tax?: SallaMoney;
+    /** v2: tax = { percent, amount: { amount, currency } } (nested!) */
+    tax?: SallaMoney | { percent?: unknown; amount?: SallaMoney };
     total?: SallaMoney;
     cash_on_net?: SallaMoney;
     gateway_fee?: SallaMoney;
   };
+  /** order.refunded events may carry refund records with amounts. */
+  refunds?: Array<{ id?: number | string; amount?: SallaMoney | number | string; amounts?: { total?: SallaMoney } }>;
   customer?: { first_name?: string; last_name?: string; mobile?: string | null };
   items?: SallaOrderItem[];
+}
+
+/**
+ * Pull the order object out of a Salla webhook payload. Salla v2 webhooks
+ * wrap the order under `data` ({ event, merchant, created_at, data: {…} });
+ * older integrations posted the order fields at the top level. We accept both:
+ * use `data` when it looks like an order, else the payload itself.
+ */
+export function extractSallaWebhook(payload: Record<string, unknown>): {
+  event: string;
+  merchant: string | number | undefined;
+  order: SallaOrderPayload;
+} {
+  const event = String(payload.event ?? payload.webhook_event ?? "");
+  const merchant = payload.merchant as string | number | undefined;
+  const data = payload.data as Record<string, unknown> | undefined;
+  const looksLikeOrder =
+    !!data && typeof data === "object" && ("id" in data || "reference_id" in data);
+  const order = (looksLikeOrder ? data : payload) as SallaOrderPayload;
+  return { event, merchant, order };
 }
 
 /** Salla money fields may be numbers or { amount, currency } objects. */
@@ -195,27 +233,56 @@ function moneyField(value: SallaMoney | string | number | undefined): number {
 }
 
 function mapSallaStatus(status: unknown): OrderStatus {
-  const name =
-    typeof status === "string"
-      ? status
-      : typeof status === "object" && status !== null
-        ? toTitle((status as { name?: unknown }).name)
-        : "";
-  switch (name.toLowerCase()) {
-    case "paid":
-    case "completed":
-    case "delivered":
-      return "paid";
-    case "canceled":
-    case "cancelled":
-      return "cancelled";
-    case "restored":
-    case "refunded":
-      return "refunded";
-    default:
-      // under_construction / in_progress / awaiting… land as pending → credit sale.
-      return "pending";
+  let slug = "";
+  let name = "";
+  if (typeof status === "string") {
+    slug = status;
+    name = status;
+  } else if (status && typeof status === "object") {
+    const s = status as SallaOrderStatus;
+    slug = String(s.slug ?? "");
+    name = toTitle(s.name);
   }
+  // Slug first (the reliable key), localized name as fallback.
+  const keys = `${slug} ${name}`.toLowerCase();
+  if (/completed|delivered|paid/.test(keys)) return "paid";
+  if (/cancell?ed/.test(keys)) return "cancelled";
+  if (/restored_partially|partially_refunded/.test(keys)) return "partially_refunded";
+  if (/refunded|restored/.test(keys)) return "refunded";
+  // under_review / in_progress / payment_pending / awaiting… → credit sale.
+  return "pending";
+}
+
+/** v2 tax is nested: { percent, amount: { amount, currency } } — handle both shapes. */
+function sallaTaxAmount(amounts: SallaOrderPayload["amounts"]): number {
+  const t = amounts?.tax;
+  if (!t) return 0;
+  if (typeof t === "object") {
+    const inner = (t as { amount?: unknown }).amount;
+    if (inner && typeof inner === "object") return moneyField(inner as SallaMoney);
+    return moneyField(t as SallaMoney);
+  }
+  return moneyField(t);
+}
+
+/** v2 discounts are an array; v1 used a single money field. Sum defensively. */
+function sallaDiscountAmount(amounts: SallaOrderPayload["amounts"]): number {
+  const single = moneyField(amounts?.discount);
+  if (single > 0) return single;
+  return round2(
+    (amounts?.discounts ?? []).reduce((sum, d) => sum + money(d.discount), 0),
+  );
+}
+
+/** Refund records when the event carries them (order.refunded). */
+function sallaRefundTotal(payload: SallaOrderPayload): number {
+  const refunds = Array.isArray(payload.refunds) ? payload.refunds : [];
+  return round2(
+    refunds.reduce(
+      (sum, r) => sum + (moneyField(r.amounts?.total) || moneyField(r.amount)),
+      0,
+    ),
+  );
 }
 
 /**
@@ -247,19 +314,29 @@ export function normalizeSallaOrder(payload: SallaOrderPayload): NormalizedOrder
   const a = payload.amounts ?? {};
   const subtotal = moneyField(a.sub_total) || round2(items.reduce((s, i) => s + i.line_subtotal, 0));
   const shipping = moneyField(a.shipping_cost);
-  const discounts = moneyField(a.discount);
-  const tax = moneyField(a.tax);
+  const discounts = sallaDiscountAmount(a);
+  const tax = sallaTaxAmount(a);
   const total = moneyField(a.total) || round2(subtotal + shipping + tax - discounts);
   // Gateway fee when Salla exposes it (payment gateway apps); else 0.
   const fee = moneyField(a.gateway_fee);
+  const refundTotal = sallaRefundTotal(payload);
 
   const firstName = payload.customer?.first_name ?? "";
   const lastName = payload.customer?.last_name ?? "";
   const customerName =
     [firstName, lastName].filter(Boolean).join(" ") || payload.customer?.mobile || "Guest";
 
-  const dateStr =
+  // Salla dates arrive as "2026-09-24 12:21:45.000000" (space-separated, 6-digit
+  // fraction, store timezone) — normalize to an ISO-parseable form.
+  const rawDate =
     typeof payload.date === "string" ? payload.date : (payload.date?.date ?? undefined);
+  const dateStr = rawDate ? rawDate.trim().replace(" ", "T") : undefined;
+
+  let status = mapSallaStatus(payload.status);
+  // A refund event/status overrides the raw status mapping.
+  if (refundTotal > 0 && total > 0) {
+    status = refundTotal >= total ? "refunded" : "partially_refunded";
+  }
 
   return {
     external_id: String(payload.id ?? payload.reference_id ?? ""),
@@ -275,8 +352,8 @@ export function normalizeSallaOrder(payload: SallaOrderPayload): NormalizedOrder
     payment_gateway: payload.payment_method ?? "salla",
     payment_fee: fee,
     shipping_cost: 0, // filled from catalog/store config when known
-    refund_amount: 0,
-    status: mapSallaStatus(payload.status),
+    refund_amount: refundTotal,
+    status,
     ordered_at: dateStr ?? new Date().toISOString(),
     items,
   };

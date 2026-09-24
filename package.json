@@ -18,7 +18,9 @@
     "webhooks:replay": "node --env-file-if-exists=.env.local scripts/run-ts.mjs scripts/replay-webhooks.ts",
     "webhooks:listen": "stripe listen --forward-to localhost:3000/api/webhooks/stripe",
     "test:shopify": "node scripts/run-ts.mjs scripts/verify-shopify-pipeline.ts",
-    "webhook:simulate": "node --env-file-if-exists=.env.local scripts/simulate-shopify-webhook.mjs"
+    "test:salla": "node scripts/run-ts.mjs scripts/verify-salla-pipeline.ts",
+    "webhook:simulate": "node --env-file-if-exists=.env.local scripts/simulate-shopify-webhook.mjs",
+    "webhook:simulate-salla": "node --env-file-if-exists=.env.local scripts/simulate-salla-webhook.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
