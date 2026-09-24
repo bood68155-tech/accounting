@@ -114,12 +114,25 @@ export async function validateShopifyTokenScopes(
 /**
  * Wrap a Shopify Admin API fetch: non-2xx responses throw, with 401/403
  * mapped to {@link ShopifyAuthError} so callers can trigger the re-auth flow.
+ * A 429 (rate limited) waits per the Retry-After header and retries once —
+ * catalog/order pulls fan out across pages, so a single 429 shouldn't fail
+ * the whole sync.
  */
 async function shopifyApiFetch(url: string, token: string): Promise<Response> {
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     headers: { "X-Shopify-Access-Token": token },
     cache: "no-store",
   });
+  if (res.status === 429) {
+    const retryAfter = Number.parseFloat(res.headers.get("retry-after") ?? "2");
+    const delayMs = Math.min(Math.max(Number.isFinite(retryAfter) ? retryAfter * 1000 : 2000, 500), 10_000);
+    console.warn(`[shopify] rate limited (429) — retrying in ${Math.round(delayMs / 100) / 10}s: ${url.split("?")[0]}`);
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    res = await fetch(url, {
+      headers: { "X-Shopify-Access-Token": token },
+      cache: "no-store",
+    });
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     if (res.status === 401) {

@@ -18,6 +18,8 @@ import { toOrder } from "@/lib/providers/types";
 import { computeOrderProfit } from "@/lib/accounting/profitEngine";
 import {
   createSaleEntry,
+  createCreditSaleEntry,
+  createPaymentCollectionEntry,
   createRefundEntry,
   validateEntry,
   line,
@@ -191,6 +193,43 @@ console.log("\n-- 5. Refund entry + guards -------------------------------------
   }
   check("validateEntry rejects unbalanced entries", threw);
 
+  // medici/ERPNext-style guards: negative amounts and two-sided lines.
+  let negativeThrew = false;
+  try {
+    validateEntry({
+      store_id: "s", entry_number: 98, entry_date: "2026-01-01",
+      description: "x", reference: "r", source: "manual", status: "posted",
+      lines: [line("1000", "cash", -5), line("4000", "sales", 0, 5)],
+    });
+  } catch {
+    negativeThrew = true;
+  }
+  check("validateEntry rejects negative amounts", negativeThrew);
+
+  let twoSidedThrew = false;
+  try {
+    validateEntry({
+      store_id: "s", entry_number: 97, entry_date: "2026-01-01",
+      description: "x", reference: "r", source: "manual", status: "posted",
+      lines: [line("1000", "cash", 10, 4), line("4000", "sales", 0, 6)],
+    });
+  } catch {
+    twoSidedThrew = true;
+  }
+  check("validateEntry rejects two-sided lines", twoSidedThrew);
+
+  let emptyThrew = false;
+  try {
+    validateEntry({
+      store_id: "s", entry_number: 96, entry_date: "2026-01-01",
+      description: "x", reference: "r", source: "manual", status: "posted",
+      lines: [],
+    });
+  } catch {
+    emptyThrew = true;
+  }
+  check("validateEntry rejects empty entries", emptyThrew);
+
   let unknownThrew = false;
   try {
     line("9999", "nope", 1, 0);
@@ -198,6 +237,26 @@ console.log("\n-- 5. Refund entry + guards -------------------------------------
     unknownThrew = true;
   }
   check("line() rejects unknown account codes", unknownThrew);
+}
+
+console.log("\n-- 6. Payment reference audit trail ------------------------------------------");
+{
+  const creditSale = createCreditSaleEntry(order, 10);
+  validateEntry(creditSale);
+  const byCode = new Map(creditSale.lines.map((l) => [l.account_code, l]));
+  check("credit sale: Dr Accounts Receivable", approx(byCode.get("1100")!.debit, order.total_amount));
+  check("credit sale balances",
+    approx(lineTotal(creditSale, "debit"), lineTotal(creditSale, "credit")));
+
+  const collection = createPaymentCollectionEntry(order, 11, "ch_3Nabc123");
+  check("collection reference carries gateway payment id",
+    collection.reference === "ch_3Nabc123");
+  check("collection balances",
+    approx(lineTotal(collection, "debit"), lineTotal(collection, "credit")));
+  const collByCode = new Map(collection.lines.map((l) => [l.account_code, l]));
+  check("collection: Cr AR full amount", approx(collByCode.get("1100")!.credit, order.total_amount));
+  check("collection: Dr Cash net of fee",
+    approx(collByCode.get("1000")!.debit, order.total_amount - order.payment_fee));
 }
 
 console.log(`\n${failed === 0 ? "PASS" : "FAIL"}: ${passed} passed, ${failed} failed`

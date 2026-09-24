@@ -19,6 +19,11 @@ import pg from "pg";
 
 const { Client } = pg;
 
+// This purge removes ledger rows (orders/journal entries/events), so the
+// ERPNext-style immutability guard is suspended for this maintenance session.
+// See scripts/ledger-guard.mjs for the documented pattern.
+let ledgerGuardSuspended = false;
+
 const args = process.argv.slice(2);
 const APPLY = args.includes("--yes");
 
@@ -66,6 +71,11 @@ async function main() {
         );
 
         if (APPLY) {
+          if (!ledgerGuardSuspended) {
+            await client.query("set app.ledger_guard = 'off'");
+            ledgerGuardSuspended = true;
+            console.log("   ledger immutability guard suspended for the purge");
+          }
           // order_items/journal_lines cascade from their parents.
           await client.query(`delete from ${T("integration_events")} where store_id = $1`, [store.id]);
           await client.query(`delete from ${T("journal_entries")} where store_id = $1`, [store.id]);

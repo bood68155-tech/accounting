@@ -42,8 +42,15 @@ function dropZeroLines(lines: JournalLine[]): JournalLine[] {
   return lines.filter((l) => l.debit !== 0 || l.credit !== 0);
 }
 
-/** Throws unless the entry is balanced (debits === credits). */
+/**
+ * Throws unless the entry is balanced (debits === credits), every line carries
+ * exactly one non-zero side with a non-negative amount, and the entry has at
+ * least one line (medici's "INVALID JOURNAL" + ERPNext's zero-value guards).
+ */
 export function validateEntry(entry: JournalEntry): JournalEntry {
+  if (entry.lines.length === 0) {
+    throw new Error(`Empty journal entry #${entry.entry_number} — nothing to post.`);
+  }
   const debits = entry.lines.reduce((sum, l) => sum + l.debit, 0);
   const credits = entry.lines.reduce((sum, l) => sum + l.credit, 0);
   const difference = Math.abs(debits - credits);
@@ -51,6 +58,18 @@ export function validateEntry(entry: JournalEntry): JournalEntry {
     throw new Error(
       `Unbalanced journal entry #${entry.entry_number}: debits ${debits.toFixed(2)} ≠ credits ${credits.toFixed(2)}`,
     );
+  }
+  for (const l of entry.lines) {
+    if (l.debit < 0 || l.credit < 0) {
+      throw new Error(
+        `Journal entry #${entry.entry_number} line "${l.description}" has a negative amount (${l.debit}/${l.credit}) — post the amount on the opposite side instead.`,
+      );
+    }
+    if (l.debit > 0 && l.credit > 0) {
+      throw new Error(
+        `Journal entry #${entry.entry_number} line "${l.description}" has both debit and credit — split it into two lines.`,
+      );
+    }
   }
   return entry;
 }
@@ -175,17 +194,20 @@ export function createCreditSaleEntry(order: Order, entryNumber: number): Journa
  * Settle a credit sale: Dr Cash (net of gateway fee) + Dr fees, Cr AR.
  * Posting this for an order that was already booked as a paid sale would
  * double-count — only call it for receivable-backed orders.
+ * `paymentReference` (gateway payment id) lands in the entry reference for
+ * audit trail; falls back to the order's external id.
  */
 export function createPaymentCollectionEntry(
   order: Order,
   entryNumber: number,
+  paymentReference?: string,
 ): JournalEntry {
   return validateEntry({
     store_id: order.store_id,
     entry_number: entryNumber,
     entry_date: new Date().toISOString().slice(0, 10),
     description: `Payment collected for ${order.order_number} — ${order.customer_name}`,
-    reference: order.external_id,
+    reference: paymentReference ?? order.external_id,
     source: "fee",
     status: "posted",
     lines: dropZeroLines([

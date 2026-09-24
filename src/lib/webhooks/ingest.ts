@@ -255,11 +255,14 @@ async function postEntriesForOrder(schema: string, order: Order): Promise<number
  * Accounts Receivable settlement: when a payment event (Stripe/PayPal) arrives
  * for an order that was booked as a credit sale, flip Dr AR → Dr Cash + fees.
  * Revenue is NOT re-recognized — only the balance sheet moves.
+ * `paymentExternalId` is the gateway payment/transaction id — recorded on the
+ * journal entry for audit trail (ERPNext-style voucher reference).
  */
 async function settleReceivable(
   schema: string,
   storeId: string,
   orderExternalId: string,
+  paymentExternalId?: string,
 ): Promise<boolean> {
   const db = tenantDb(schema);
   const t = getTenantTables(schema);
@@ -312,7 +315,7 @@ async function settleReceivable(
   };
 
   const entryNumber = await nextEntryNumber(schema);
-  await persistEntries(schema, [createPaymentCollectionEntry(order, entryNumber)]);
+  await persistEntries(schema, [createPaymentCollectionEntry(order, entryNumber, paymentExternalId)]);
 
   await db
     .update(t.orders)
@@ -501,8 +504,44 @@ export async function processPaymentWebhook(input: {
     // A payment for a pending (credit-sale) order settles its receivable;
     // anything else is a standalone gateway fee capture.
     const settled = input.payment.order_external_id
-      ? await settleReceivable(schema, input.storeId, input.payment.order_external_id)
+      ? await settleReceivable(
+          schema,
+          input.storeId,
+          input.payment.order_external_id,
+          input.payment.external_id,
+        )
       : false;
+
+    // Idempotency for retried payment webhooks: gateway providers retry
+    // deliveries. Before posting a standalone fee entry, check whether this
+    // payment id was already journaled — a retry must never double-post.
+    if (input.payment.fee > 0 && !settled) {
+      const t2 = getTenantTables(schema);
+      const duplicate = await tenantDb(schema)
+        .select({ id: t2.journalEntries.id })
+        .from(t2.journalEntries)
+        .where(
+          and(
+            eq(t2.journalEntries.storeId, input.storeId),
+            eq(t2.journalEntries.reference, input.payment.external_id),
+          ),
+        )
+        .limit(1);
+      if (duplicate.length > 0) {
+        await logEvent(schema, {
+          storeId: input.storeId,
+          provider: input.provider,
+          eventType: input.eventType,
+          payload: input.rawPayload,
+          status: "processed",
+        });
+        return {
+          ok: true,
+          eventType: input.eventType,
+          message: `Payment ${input.payment.external_id} already journaled — idempotent skip (no double-posted fees).`,
+        };
+      }
+    }
 
     if (input.payment.fee > 0 && !settled) {
       const entryNumber = await nextEntryNumber(schema);

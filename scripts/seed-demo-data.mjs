@@ -29,6 +29,11 @@ import pg from "pg";
 
 const { Client } = pg;
 
+// The demo seed wipes the demo store's transactional data before rebuilding
+// it, so the ERPNext-style ledger immutability guard must be suspended for
+// this maintenance session (see scripts/ledger-guard.mjs).
+let ledgerGuardSuspended = false;
+
 // ─── deterministic PRNG + catalog ─────────────────────────────────────────────
 
 function mulberry32(seed) {
@@ -394,6 +399,13 @@ async function main() {
     // 6. Reset the demo store's transactional data so the deterministic
     //    dataset (and its entry numbering) is rebuilt cleanly each run.
     //    Cascades take care of order_items and journal_lines.
+    //    The journal immutability triggers are suspended first — this is an
+    //    explicit maintenance rewrite of the demo ledger.
+    if (!ledgerGuardSuspended) {
+      await client.query("set app.ledger_guard = 'off'");
+      ledgerGuardSuspended = true;
+      console.log("  ledger immutability guard suspended for the demo re-seed");
+    }
     await client.query(`delete from ${T("integration_events")} where store_id = $1`, [DEMO_STORE_ID]);
     await client.query(`delete from ${T("journal_entries")} where store_id = $1`, [DEMO_STORE_ID]);
     await client.query(`delete from ${T("orders")} where store_id = $1`, [DEMO_STORE_ID]);
