@@ -12,7 +12,137 @@ import { money } from "@/lib/providers/types";
  *
  * Manual pull: GET orders from the Admin REST API with the same custom-app
  * token (shpat_…) used for catalog sync.
+ *
+ * Auth errors (401/403) are surfaced as {@link ShopifyAuthError} so callers
+ * (order sync, catalog sync) can distinguish "token expired / scopes missing
+ * → reconnect the store" from transient API failures and prompt a clean
+ * re-authorization in the UI instead of a raw error string.
  */
+
+/** Admin REST API version used for all Shopify calls in this adapter. */
+const SHOPIFY_API_VERSION = "2024-10";
+
+/** Scopes required for order + catalog pulls (Admin REST custom app token). */
+export const SHOPIFY_REQUIRED_SCOPES = ["read_products", "read_orders"] as const;
+
+/** Error thrown when the store's Admin API token is invalid or lacks scopes. */
+export class ShopifyAuthError extends Error {
+  readonly kind: "unauthorized" | "forbidden";
+  /** Scopes carried by the stored token (when the API reported them). */
+  readonly tokenScopes: string[] | null;
+  /** Scopes the app requires (SHOPIFY_REQUIRED_SCOPES). */
+  readonly requiredScopes: string[];
+
+  constructor(
+    kind: "unauthorized" | "forbidden",
+    message: string,
+    options: { tokenScopes?: string[] | null; requiredScopes?: string[] } = {},
+  ) {
+    super(message);
+    this.name = "ShopifyAuthError";
+    this.kind = kind;
+    this.tokenScopes = options.tokenScopes ?? null;
+    this.requiredScopes = options.requiredScopes ?? [...SHOPIFY_REQUIRED_SCOPES];
+  }
+}
+
+export function isShopifyAuthError(error: unknown): error is ShopifyAuthError {
+  return error instanceof ShopifyAuthError;
+}
+
+function missingScopes(tokenScopes: string[], required: readonly string[]): string[] {
+  const granted = new Set(tokenScopes.map((s) => s.toLowerCase()));
+  return required.filter((scope) => !granted.has(scope.toLowerCase()));
+}
+
+/**
+ * Validate that the stored OAuth access token still carries the scopes the
+ * app needs (read_orders for order sync, read_products for catalog/COGS).
+ * Calls `GET /admin/api/<v>/oauth/access_scopes.json` and returns the granted
+ * scopes, or throws {@link ShopifyAuthError} when the token is dead (401).
+ *
+ * NOTE: admin-created custom apps (shpat_ tokens created in the Shopify
+ * admin) get a 404 from this endpoint — scopes can't be listed for them, so
+ * we return [] and let the real data fetch surface any 403 instead.
+ */
+export async function validateShopifyTokenScopes(
+  domain: string,
+  token: string,
+): Promise<string[]> {
+  const base = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}`;
+  let res: Response;
+  try {
+    res = await fetch(`${base}/oauth/access_scopes.json`, {
+      headers: { "X-Shopify-Access-Token": token },
+      cache: "no-store",
+    });
+  } catch (error) {
+    throw new Error(
+      `Cannot reach Shopify (${domain}): ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (res.status === 401) {
+    throw new ShopifyAuthError(
+      "unauthorized",
+      "The store's Admin API token was rejected (401 — invalid API key or access token). The app was uninstalled or the token was regenerated. Reconnect the store with a fresh shpat_ token.",
+    );
+  }
+  if (res.status === 404) {
+    // Admin-created custom apps don't expose the OAuth scopes endpoint.
+    // The token may still be fine — the real fetch decides.
+    return [];
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Shopify access_scopes API ${res.status}: ${body.slice(0, 200)}`);
+  }
+
+  const data = (await res.json()) as { access_scopes?: Array<{ handle?: string }> };
+  const scopes = (data.access_scopes ?? []).map((s) => s.handle ?? "").filter(Boolean);
+  const missing = missingScopes(scopes, SHOPIFY_REQUIRED_SCOPES);
+  if (missing.length > 0) {
+    throw new ShopifyAuthError(
+      "forbidden",
+      `The store's access token is missing required scope${missing.length === 1 ? "" : "s"}: ${missing.join(", ")}. Update the app's granted scopes in the Shopify admin, then reconnect the store to get a new token.`,
+      { tokenScopes: scopes },
+    );
+  }
+  return scopes;
+}
+
+/**
+ * Wrap a Shopify Admin API fetch: non-2xx responses throw, with 401/403
+ * mapped to {@link ShopifyAuthError} so callers can trigger the re-auth flow.
+ */
+async function shopifyApiFetch(url: string, token: string): Promise<Response> {
+  const res = await fetch(url, {
+    headers: { "X-Shopify-Access-Token": token },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    if (res.status === 401) {
+      throw new ShopifyAuthError(
+        "unauthorized",
+        "Shopify rejected the Admin API token (401) — reconnect the store to re-authorize.",
+      );
+    }
+    if (res.status === 403) {
+      // Shopify's own body is the clearest: "This action requires merchant
+      // approval for read_orders scope." Include it in the surfaced message.
+      const scopeHint = /scope/i.test(body)
+        ? ` (${body.slice(0, 200).replace(/\s+/g, " ").trim()})`
+        : " — the access token is missing required scopes (e.g. read_orders)";
+      throw new ShopifyAuthError(
+        "forbidden",
+        `This token does not have access to this resource (403)${scopeHint}. Grant the missing scopes in the Shopify admin and reconnect the store with a new token.`,
+      );
+    }
+    throw new Error(`Shopify API ${res.status}: ${body.slice(0, 300)}`);
+  }
+  return res;
+}
 
 export function verifyShopifyWebhook(
   rawBody: string,
@@ -48,8 +178,6 @@ export interface ShopifyCatalogProduct {
   cost_price: number | null;
 }
 
-const SHOPIFY_API_VERSION = "2024-10";
-
 /**
  * Fetch the product catalog from the Shopify Admin REST API.
  * Token: a custom-app Admin API access token (shpat_…). Variants without a
@@ -61,18 +189,13 @@ export async function fetchShopifyProducts(
   token: string,
 ): Promise<ShopifyCatalogProduct[]> {
   const base = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}`;
-  const headers = { "X-Shopify-Access-Token": token };
 
   type Draft = ShopifyCatalogProduct & { inventoryItemId?: string };
   const drafts: Draft[] = [];
 
   let url: string | null = `${base}/products.json?limit=250&status=active`;
   while (url) {
-    const res: Response = await fetch(url, { headers, cache: "no-store" });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Shopify products API ${res.status}: ${body.slice(0, 200)}`);
-    }
+    const res: Response = await shopifyApiFetch(url, token);
     const data = (await res.json()) as {
       products?: Array<{
         id: number;
@@ -119,8 +242,10 @@ export async function fetchShopifyProducts(
   const costByItemId = new Map<string, number>();
   for (let i = 0; i < itemIds.length; i += 100) {
     const chunk = itemIds.slice(i, i + 100);
+    // Costs are best-effort: any failure just leaves them null (the user can
+    // set them in the UI), so this fetch is deliberately not auth-wrapped.
     const res = await fetch(`${base}/inventory_items.json?ids=${chunk.join(",")}`, {
-      headers,
+      headers: { "X-Shopify-Access-Token": token },
       cache: "no-store",
     });
     if (!res.ok) continue; // costs stay null — the user can set them in the UI
@@ -160,18 +285,13 @@ export async function fetchShopifyOrders(
   const days = Math.min(Math.max(options.days ?? 30, 1), 365);
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
   const base = `https://${domain}/admin/api/${SHOPIFY_API_VERSION}`;
-  const headers = { "X-Shopify-Access-Token": token };
 
   const orders: ShopifyAdminOrder[] = [];
   let url: string | null =
     `${base}/orders.json?limit=${limit}&status=any&created_at_min=${encodeURIComponent(since)}`;
 
   while (url) {
-    const res: Response = await fetch(url, { headers, cache: "no-store" });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`Shopify orders API ${res.status}: ${body.slice(0, 300)}`);
-    }
+    const res: Response = await shopifyApiFetch(url, token);
     const data = (await res.json()) as { orders?: ShopifyAdminOrder[] };
     orders.push(...(data.orders ?? []));
     const link: string | null = res.headers.get("link");

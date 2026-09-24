@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
+import { ReconnectStorePrompt } from "@/components/reconnect-store-prompt";
 import { syncShopifyOrders } from "@/app/(app)/orders/actions";
 
 /**
@@ -10,6 +11,9 @@ import { syncShopifyOrders } from "@/app/(app)/orders/actions";
  * Admin REST API using the store's Admin access token (shpat_…), so orders can
  * be imported at any time without depending on webhook delivery. Idempotent:
  * orders already in the ledger are skipped, never double-booked.
+ *
+ * Auth failures (401 token dead / 403 missing read_orders scope) surface as a
+ * reconnect/re-authorize prompt instead of a raw error string.
  */
 export function SyncOrdersButton() {
   const router = useRouter();
@@ -17,29 +21,62 @@ export function SyncOrdersButton() {
   const [syncing, setSyncing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
+  const [reauth, setReauth] = useState<{
+    storeName?: string;
+    detail?: string;
+    missingScopes?: string[];
+  } | null>(null);
 
   async function handleSync() {
     setSyncing(true);
     setMessage(null);
     setIsError(false);
+    setReauth(null);
 
     const result = await syncShopifyOrders();
 
     setSyncing(false);
     if (!result.ok) {
       setIsError(true);
+      if (result.needsReauth) {
+        setReauth({
+          storeName: result.storeName,
+          detail: result.error,
+        });
+        return;
+      }
       setMessage(result.error);
       return;
     }
 
-    const { fetched, imported, skipped, stores } = result.summary;
+    const { fetched, imported, skipped, stores, needsReauth } = result.summary;
+
+    // Mixed results: some store(s) failed auth while others synced — show the
+    // reconnect prompt above the summary line.
+    const authStore = stores.find((s) => s.needsReauth);
+    if (needsReauth && authStore) {
+      // Only show "missing scopes" chips when the scopes endpoint actually
+      // reported the granted set (custom apps 404 there — nothing to compare).
+      const granted = authStore.grantedScopes ?? [];
+      const required = authStore.requiredScopes ?? [];
+      const missingScopes =
+        granted.length > 0
+          ? required.filter((r) => !granted.some((g) => g.toLowerCase() === r.toLowerCase()))
+          : undefined;
+      setReauth({
+        storeName: authStore.storeName,
+        detail: authStore.error,
+        missingScopes,
+      });
+    }
+
     const notes = stores
-      .filter((s) => s.error || s.skippedNote)
+      .filter((s) => !s.needsReauth && (s.error || s.skippedNote))
       .map((s) => `${s.storeName}: ${s.error ?? s.skippedNote}`)
       .join(" · ");
 
     const headline =
-      fetched === 0
+      fetched === 0 && !needsReauth
         ? "No recent orders found in Shopify (last 30 days)."
         : `Synced from Shopify — ${imported} new order${imported === 1 ? "" : "s"} imported, ${skipped} already in the ledger.`;
 
@@ -60,6 +97,15 @@ export function SyncOrdersButton() {
           webhooks fail. Already-synced orders are never double-booked.
         </p>
       </div>
+      {reauth && (
+        <ReconnectStorePrompt
+          storeName={reauth.storeName}
+          detail={reauth.detail}
+          missingScopes={reauth.missingScopes}
+          onRetry={handleSync}
+          retrying={syncing}
+        />
+      )}
       {message && (
         <div
           className={`rounded-xl border px-4 py-3 text-sm ${

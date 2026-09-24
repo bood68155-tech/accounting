@@ -8,10 +8,14 @@ import { syncTenantOrders, type OrderSyncSummary } from "@/lib/orders/sync";
 // Manual "Sync Shopify Orders" action: pulls recent orders straight from the
 // Shopify Admin REST API (shpat_… token) into the tenant — the webhook-free
 // fallback that works at any time.
+//
+// Auth failures (401 dead token / 403 missing scopes) are surfaced through
+// `summary.needsReauth` so the UI can prompt a reconnect/re-authorize flow
+// instead of a raw error string.
 
 export type OrderSyncResult =
   | { ok: true; summary: OrderSyncSummary }
-  | { ok: false; error: string };
+  | { ok: false; error: string; needsReauth?: boolean; storeName?: string };
 
 export async function syncShopifyOrders(
   storeId?: string,
@@ -28,6 +32,23 @@ export async function syncShopifyOrders(
     revalidatePath("/dashboard");
     revalidatePath("/reports/balance-sheet");
     revalidatePath("/reports/income-statement");
+
+    // Every store hit an auth error and nothing could be pulled: report as a
+    // re-auth failure so the UI shows the reconnect prompt prominently.
+    const authStores = summary.stores.filter((s) => s.needsReauth);
+    const allAuthFailed =
+      authStores.length > 0 && summary.fetched === 0 && summary.imported === 0;
+    if (allAuthFailed) {
+      const first = authStores[0];
+      return {
+        ok: false,
+        error:
+          first.error ??
+          "The store's Shopify access token needs to be re-authorized.",
+        needsReauth: true,
+        storeName: first.storeName,
+      };
+    }
     return { ok: true, summary };
   } catch (err) {
     console.error("[order-sync] server action FAILED:", err);

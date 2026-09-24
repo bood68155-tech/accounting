@@ -91,7 +91,8 @@ function check(name, cond, detail) {
 }
 
 const approx = (a, b, eps = 0.001) => Math.abs(a - b) <= eps;
-const sign = (rawBody) => createHmac("sha256", SECRET).update(rawBody, "utf8").digest("hex");
+// Shopify sends the HMAC BASE64-encoded — the app verifies base64 digests.
+const sign = (rawBody) => createHmac("sha256", SECRET).update(rawBody, "utf8").digest("base64");
 
 async function sendOrder(name, payload, topic = "orders/create", signature) {
   const raw = JSON.stringify(payload);
@@ -165,6 +166,13 @@ async function main() {
   {
     const { res, json } = await sendOrder("tampered", richOrder, "orders/create", "deadbeefdeadbeef");
     check("tampered signature rejected with 401", res.status === 401 && json.ok === false);
+  }
+
+  // 4. Malformed order payloads are acked with a 400 (nothing to book).
+  console.log("\n-- Malformed payload guard ------------------------------------------------");
+  {
+    const { res, json } = await sendOrder("no-line-items", { id: 424242, name: "#4242" });
+    check("payload without line_items rejected with 400", res.status === 400 && json.ok === false);
   }
 
   console.log(`\n${failed === 0 ? "PASS" : "FAIL"}: ${passed} passed, ${failed} failed${failures.length ? "\n  " + failures.join("\n  ") : ""}\n`);

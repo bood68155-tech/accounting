@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { tenantDb, getTenantTables, isDatabaseConfigured, isTenantSchema } from "@/lib/db";
-import { fetchShopifyOrders, normalizeShopifyOrder } from "@/lib/providers/shopify";
+import {
+  fetchShopifyOrders,
+  isShopifyAuthError,
+  normalizeShopifyOrder,
+  validateShopifyTokenScopes,
+} from "@/lib/providers/shopify";
 import { processOrderWebhook, type IngestResult } from "@/lib/webhooks/ingest";
 import type { Platform } from "@/types";
 
@@ -28,6 +33,17 @@ export interface OrderSyncStoreResult {
   skipped: number;
   skippedNote?: string;
   error?: string;
+  /**
+   * Set when the store's Admin API token failed auth (401) or lacks required
+   * scopes (403). The UI shows a reconnect/re-authorize prompt for these.
+   */
+  needsReauth?: boolean;
+  /** Human-readable scope mismatch detail (missing scopes, granted scopes). */
+  scopeDetail?: string;
+  /** Scopes granted to the stored token (when Shopify reported them). */
+  grantedScopes?: string[];
+  /** Scopes the app requires (read_products, read_orders). */
+  requiredScopes?: string[];
 }
 
 export interface OrderSyncSummary {
@@ -37,6 +53,8 @@ export interface OrderSyncSummary {
   skipped: number;
   stores: OrderSyncStoreResult[];
   error?: string;
+  /** True when at least one store failed auth and must be reconnected. */
+  needsReauth?: boolean;
 }
 
 /** Read an access token for a store from its config, falling back to env. */
@@ -104,9 +122,11 @@ export async function syncTenantOrders(
         fetched: 0,
         imported: 0,
         skipped: 0,
+        needsReauth: true,
         error:
           "Missing Admin API access token — add accessToken in the store config or set SHOPIFY_ADMIN_TOKEN.",
       });
+      summary.needsReauth = true;
       continue;
     }
     if (!store.domain) {
@@ -122,6 +142,14 @@ export async function syncTenantOrders(
     }
 
     try {
+      // Validate the stored OAuth token BEFORE pulling: a 401 (dead token) or
+      // 403 (missing read_orders/read_products scope) must surface as a clean
+      // reconnect prompt, not a raw "Shopify orders API 403" error.
+      const grantedScopes = await validateShopifyTokenScopes(store.domain, token);
+      console.log(
+        `[order-sync] ${store.name}: token scopes OK (${grantedScopes.join(", ") || "none reported"})`,
+      );
+
       const rawOrders = await fetchShopifyOrders(store.domain, token, {
         days: options.days,
         limit: options.limit,
@@ -177,6 +205,7 @@ export async function syncTenantOrders(
         fetched: rawOrders.length,
         imported,
         skipped,
+        grantedScopes,
       });
       summary.fetched += rawOrders.length;
       summary.imported += imported;
@@ -184,14 +213,27 @@ export async function syncTenantOrders(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error(`[order-sync] ${store.name} FAILED:`, error);
+      // Auth failures (401 dead token / 403 missing scopes) are actionable:
+      // flag the store so the UI can prompt a reconnect instead of showing a
+      // dead-end error string.
+      const isAuth = isShopifyAuthError(error);
       summary.stores.push({
         ...base,
         platform: store.platform,
         fetched: 0,
         imported: 0,
         skipped: 0,
+        ...(isAuth
+          ? {
+              needsReauth: true,
+              scopeDetail: message,
+              grantedScopes: error.tokenScopes ?? undefined,
+              requiredScopes: [...error.requiredScopes],
+            }
+          : {}),
         error: message,
       });
+      if (isAuth) summary.needsReauth = true;
     }
   }
 

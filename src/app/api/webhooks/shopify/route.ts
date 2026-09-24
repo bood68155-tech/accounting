@@ -81,6 +81,23 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, ignored: true, topic });
   }
 
+  // orders/create (and friends) must carry an order id and a line_items array.
+  // Without them there is nothing to book — ack 200 so Shopify stops retrying
+  // a payload we can never process, and log loudly for debugging.
+  const hasOrder =
+    (typeof payload.id === "number" || typeof payload.id === "string") &&
+    Array.isArray(payload.line_items);
+  if (!hasOrder) {
+    console.error(
+      `[shopify-webhook] MALFORMED PAYLOAD — topic=${topic} shop=${shopDomain} webhook_id=${webhookId} ` +
+        `hasId=${"id" in payload} lineItemsIsArray=${Array.isArray(payload.line_items)} keys=${Object.keys(payload).slice(0, 12).join(",")}`,
+    );
+    return NextResponse.json(
+      { ok: false, error: "Payload is not a processable order (missing id or line_items)." },
+      { status: 400 },
+    );
+  }
+
   // Resolve the target store: explicit id wins, then the shop domain header.
   let storeId = storeIdFrom(request);
   if (!storeId && shopDomain !== "unknown") {
