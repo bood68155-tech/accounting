@@ -63,6 +63,9 @@ export interface StoreAnalytics {
   grossMargin: number;
   netMargin: number;
 
+  /** Net sales for the analyzed window (ROAS denominator, what-if sims). */
+  netSales: number;
+
   /** Average order value and average fulfillment cost per order. */
   aov: number;
   avgShippingCost: number;
@@ -176,6 +179,7 @@ export function computeStoreAnalytics(
 
     grossMargin: agg.gross_margin,
     netMargin: agg.net_margin,
+    netSales: agg.net_sales,
 
     aov: analyzed.length > 0 ? round2(agg.net_sales / analyzed.length) : 0,
     avgShippingCost: analyzed.length > 0 ? round2(agg.shipping_cost / analyzed.length) : 0,

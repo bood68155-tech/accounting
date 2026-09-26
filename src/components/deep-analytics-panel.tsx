@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { IconActivity, IconPackage, IconSparkles, IconTrendingDown, IconZap } from "@/components/icons";
+import { IconActivity, IconPackage, IconSparkles, IconZap } from "@/components/icons";
+import { RoasCard } from "@/components/roas-card";
 import { formatCompactCurrency, formatCurrency, formatPercent } from "@/lib/utils";
 import type { StoreAnalytics, StoreAuditReport, AuditSeverity } from "@/lib/analytics/storeResearch";
 
@@ -135,29 +136,14 @@ export function DeepAnalyticsPanel({
               </div>
             </div>
 
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-3.5">
-              <p className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
-                <IconTrendingDown className="h-3.5 w-3.5 text-violet-400" /> Return on ad spend (ROAS)
-              </p>
-              {analytics.roas != null ? (
-                <div className="mt-2.5">
-                  <p className={`text-2xl font-bold tabular-nums ${analytics.roas >= 3 ? "text-emerald-400" : analytics.roas >= 1.5 ? "text-amber-400" : "text-red-400"}`}>
-                    {analytics.roas.toFixed(2)}×
-                  </p>
-                  <p className="mt-1 text-[11px] text-zinc-500">
-                    Net sales ÷ ad spend ({formatCompactCurrency(analytics.adSpend.amount ?? 0, cur)}, {analytics.adSpend.source})
-                  </p>
-                </div>
-              ) : (
-                <div className="mt-2.5">
-                  <p className="text-lg font-semibold text-zinc-600">— placeholder —</p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">
-                    No ad spend connected yet. Set <code className="rounded bg-zinc-800 px-1 font-mono text-[10px]">store.config.adSpend</code> or wire an
-                    ads integration to unlock ROAS, blended-margin and CAC analytics.
-                  </p>
-                </div>
-              )}
-            </div>
+            <RoasCard
+              key={`${analytics.storeId}:${analytics.adSpend.amount ?? "none"}`}
+              storeId={analytics.storeId}
+              roas={analytics.roas}
+              adSpend={analytics.adSpend}
+              netSales={analytics.netSales}
+              currency={cur}
+            />
           </div>
 
           {/* Top SKUs */}

@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "db:push": "node --env-file-if-exists=.env.local scripts/apply-migrations.mjs",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/apply-migrations.mjs",
     "db:seed": "node --env-file-if-exists=.env.local scripts/seed-demo-data.mjs",
@@ -43,6 +44,7 @@
     "eslint-config-next": "16.3.0",
     "pg": "^8.23.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.7"
   }
 }
