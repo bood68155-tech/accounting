@@ -274,13 +274,9 @@ async function sendOtpEmail(
   const gmailPass = process.env.GMAIL_APP_PASSWORD?.trim();
   const smtpUrl = process.env.SMTP_URL?.trim();
 
-  // Dev/test fallback: no transport → log to the server console.
-  if (!smtpUrl && !(gmailUser && gmailPass)) {
-    console.info(`[otp] EMAIL TRANSPORT NOT CONFIGURED — code for ${email} (${purpose}): ${code}`);
-    return { ok: true, via: "console" };
-  }
-
   // Preferred path when RESEND_API_KEY is set: Resend's REST API (no SMTP).
+  // Checked FIRST — a Resend-only setup (no SMTP_URL/Gmail) must never fall
+  // through to the console fallback below.
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (resendKey) {
     const from =
@@ -309,6 +305,13 @@ async function sendOtpEmail(
       };
     }
     return { ok: true, via: "email" };
+  }
+
+  // No Resend key: SMTP / Gmail app-password via nodemailer, or the dev-only
+  // console fallback when no transport is configured at all.
+  if (!smtpUrl && !(gmailUser && gmailPass)) {
+    console.info(`[otp] EMAIL TRANSPORT NOT CONFIGURED — code for ${email} (${purpose}): ${code}`);
+    return { ok: true, via: "console" };
   }
 
   const via: "email" | "console" = "email";
