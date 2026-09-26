@@ -40,3 +40,24 @@ CREATE TABLE IF NOT EXISTS public.accounts (
 );
 
 CREATE INDEX IF NOT EXISTS accounts_user_id_idx ON public.accounts (user_id);
+
+-- 4. users.email_verified is a timestamptz (NextAuth convention: WHEN the
+--    email was verified). Early environments added it as a boolean via
+--    drizzle-kit push; create or coerce it so both worlds converge.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'email_verified'
+  ) THEN
+    ALTER TABLE public.users ADD COLUMN email_verified timestamptz;
+  ELSIF (
+    SELECT data_type FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'email_verified'
+  ) = 'boolean' THEN
+    ALTER TABLE public.users ALTER COLUMN email_verified DROP DEFAULT;
+    ALTER TABLE public.users
+      ALTER COLUMN email_verified TYPE timestamptz
+      USING CASE WHEN email_verified THEN now() END;
+  END IF;
+END $$;
