@@ -9,11 +9,14 @@
  */
 import {
   boolean,
+  index,
+  integer,
   pgEnum,
   pgTable,
   primaryKey,
   text,
   timestamp,
+  unique,
   uuid,
 } from "drizzle-orm/pg-core";
 
@@ -60,12 +63,50 @@ export const eventStatusEnum = pgEnum("event_status", ["processed", "failed"]);
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
   email: text("email").notNull().unique(),
-  passwordHash: text("password_hash").notNull(),
+  /** Nullable: Google-OAuth users have no local password. */
+  passwordHash: text("password_hash"),
+  /** Name/email-verified state mirrored from the OAuth provider when present. */
+  emailVerified: timestamp("email_verified", { withTimezone: true }),
   disabled: boolean("disabled").notNull().default(false),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/** NextAuth OAuth account links (provider ↔ user), e.g. Google. */
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull(),
+    providerAccountId: text("provider_account_id").notNull(),
+    accessToken: text("access_token"),
+    tokenType: text("token_type"),
+    scope: text("scope"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("accounts_provider_account_key").on(t.provider, t.providerAccountId)],
+);
+
+/** 6-digit email one-time passcodes (signup/login verification). */
+export const otpCodes = pgTable(
+  "otp_codes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    email: text("email").notNull(),
+    /** bcrypt hash of the 6-digit code — plaintext only ever lives in the email. */
+    codeHash: text("code_hash").notNull(),
+    purpose: text("purpose").notNull().default("signup"), // 'signup' | 'login'
+    attempts: integer("attempts").notNull().default(0),
+    consumed: boolean("consumed").notNull().default(false),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("otp_codes_email_created_idx").on(t.email, t.createdAt.desc())],
+);
 
 export const profiles = pgTable("profiles", {
   id: uuid("id")
@@ -123,6 +164,8 @@ export const migrations = pgTable("_migrations", {
 
 // ── Row shapes inferred from the schema (used by repositories) ───────────────
 export type UserRow = typeof users.$inferSelect;
+export type AccountRow = typeof accounts.$inferSelect;
+export type OtpCodeRow = typeof otpCodes.$inferSelect;
 export type ProfileRow = typeof profiles.$inferSelect;
 export type TenantRow = typeof tenants.$inferSelect;
 export type TenantUserRow = typeof tenantUsers.$inferSelect;

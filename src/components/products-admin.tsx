@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ export function ProductsAdmin({ products }: { products: Array<CatalogProduct> })
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [scopeIssues, setScopeIssues] = useState<Array<{ storeName: string; missingScopes: string[]; detail: string }>>([]);
 
   const rows = useMemo(
     () =>
@@ -66,10 +68,11 @@ export function ProductsAdmin({ products }: { products: Array<CatalogProduct> })
     startTransition(() => router.refresh());
   }
 
-  async function handleSync(storeId?: string) {
+  async function handleSync(storeId?: string, options: { retryAfterScopeGrant?: boolean } = {}) {
     setSyncing(true);
     setMessage(null);
-    const result = await syncProducts(storeId);
+    setScopeIssues([]);
+    const result = await syncProducts(storeId, options);
     setSyncing(false);
     if (!result.ok) {
       setMessage(result.error);
@@ -81,7 +84,25 @@ export function ProductsAdmin({ products }: { products: Array<CatalogProduct> })
       .map((r) => `${r.storeName}: ${r.skipped ?? r.error}`)
       .join(" · ");
     setMessage(`Synced ${synced} product${synced === 1 ? "" : "s"}.${notes ? ` ${notes}` : ""}`);
+
+    // Graceful scope handling: surface a clear warning + one-click auto-retry
+    // for stores blocked by missing platform scopes (e.g. read_products).
+    const blocked = result.results.filter((r) => r.needsScopeGrant);
+    if (blocked.length > 0) {
+      setScopeIssues(
+        blocked.map((r) => ({
+          storeName: r.storeName,
+          missingScopes: r.needsScopeGrant!.missingScopes,
+          detail: r.needsScopeGrant!.detail,
+        })),
+      );
+    }
     startTransition(() => router.refresh());
+  }
+
+  function handleScopeRetry() {
+    // One automatic retry once the scope is granted — no second manual sync.
+    void handleSync(undefined, { retryAfterScopeGrant: true });
   }
 
   return (
@@ -96,11 +117,51 @@ export function ProductsAdmin({ products }: { products: Array<CatalogProduct> })
         </p>
       </div>
 
-      {message && (
+      {message && !scopeIssues.length && (
         <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-4 py-3 text-sm text-emerald-300">
           {message}
         </div>
       )}
+
+      {scopeIssues.map((issue) => (
+        <div key={issue.storeName} className="rounded-xl border border-amber-500/30 bg-amber-500/[0.06] p-4 text-sm">
+          <p className="font-semibold text-amber-200">{issue.storeName} can&apos;t sync — missing product scope</p>
+          <p className="mt-1 text-amber-100/80">{issue.detail}</p>
+          <p className="mt-2 text-xs text-amber-100/70">
+            Missing scopes:{" "}
+            <span className="font-mono text-amber-200">
+              {issue.missingScopes.length > 0 ? issue.missingScopes.join(", ") : "read_products (not granted)"}
+            </span>
+          </p>
+          <ol className="mt-3 list-decimal space-y-1 pl-5 text-xs text-amber-100/80">
+            <li>
+              In the Shopify admin open{" "}
+              <span className="font-medium text-amber-200">Settings → Apps and sales channels → Develop apps</span> and select this app.
+            </li>
+            <li>
+              Under <span className="font-medium text-amber-200">Configuration → Admin API integration</span> grant{" "}
+              <span className="font-mono text-amber-200">read_products</span> (and{" "}
+              <span className="font-mono text-amber-200">read_orders</span> for order sync), then save.
+            </li>
+            <li>
+              Reinstall the app under <span className="font-medium text-amber-200">API credentials</span> and update the store&apos;s{" "}
+              <span className="font-mono text-amber-200">shpat_…</span> token in Stores.
+            </li>
+          </ol>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={handleScopeRetry}
+              disabled={syncing || isPending}
+            >
+              {syncing ? "Retrying…" : "Done — retry sync automatically"}
+            </Button>
+            <Link href="/stores" className="text-xs font-medium text-amber-200 underline-offset-2 hover:underline">
+              Go to stores to update the token
+            </Link>
+          </div>
+        </div>
+      ))}
 
       <Card>
         <CardHeader>

@@ -45,18 +45,41 @@ export async function updateProductCost(
   }
 }
 
-/** Pull products from the store platform APIs into the tenant catalog. */
+/**
+ * Pull products from the store platform APIs into the tenant catalog.
+ * `retryAfterScopeGrant` triggers the one-shot auto-retry pass for stores that
+ * previously failed with needsScopeGrant (used right after the merchant grants
+ * the missing Shopify scope and updates the token).
+ */
 export async function syncProducts(
   storeId?: string,
-): Promise<{ ok: true; results: SyncStoreResult[] } | { ok: false; error: string }> {
+  options: { retryAfterScopeGrant?: boolean } = {},
+): Promise<
+  | { ok: true; results: SyncStoreResult[]; retried?: string[] }
+  | { ok: false; error: string }
+> {
   const schema = await getTenantSchema();
   if (!schema) return { ok: false, error: "No tenant context — sign in and try again." };
 
   try {
     const results = await syncTenantStores(schema, storeId);
+
+    let retried: string[] | undefined;
+    if (options.retryAfterScopeGrant) {
+      const blocked = results.filter((r) => r.needsScopeGrant);
+      if (blocked.length > 0) {
+        retried = blocked.map((r) => r.storeId);
+        const retryResults = await syncTenantStores(schema, blocked[0].storeId);
+        for (let i = 0; i < results.length; i += 1) {
+          const match = retryResults.find((rr) => rr.storeId === results[i].storeId);
+          if (match) results[i] = match;
+        }
+      }
+    }
+
     revalidatePath("/products");
     revalidatePath("/stores");
-    return { ok: true, results };
+    return { ok: true, results, retried };
   } catch (err) {
     return {
       ok: false,

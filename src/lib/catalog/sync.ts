@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { tenantDb, getTenantTables } from "@/lib/db";
-import { fetchShopifyProducts } from "@/lib/providers/shopify";
+import { fetchShopifyProducts, isShopifyAuthError, validateShopifyTokenScopes } from "@/lib/providers/shopify";
 import { fetchSallaProducts } from "@/lib/providers/salla";
 
 /**
@@ -35,6 +35,48 @@ export interface SyncStoreResult {
   synced: number;
   skipped?: string;
   error?: string;
+  /**
+   * Structured sync failure, when the cause is authorization (not transient):
+   * the UI renders a "grant scope → reconnect → auto-retry" flow instead of
+   * a dead-end error string.
+   */
+  needsScopeGrant?: {
+    /** Missing scopes the merchant must grant in the platform admin. */
+    missingScopes: string[];
+    /** All scopes the stored token currently carries ([] = unknown). */
+    grantedScopes: string[];
+    /** Scopes this integration requires (read_products, read_orders…). */
+    requiredScopes: string[];
+    /** Human detail from the provider API (401/403 body). */
+    detail: string;
+    /** 'unauthorized' → token dead; 'forbidden' → scope grant needed. */
+    kind: "unauthorized" | "forbidden";
+  };
+}
+
+/**
+ * Map a thrown error from a provider catalog fetch onto a structured
+ * needsScopeGrant result when it is an authorization problem (Shopify
+ * 401/403, missing read_products…). Returns undefined for ordinary failures.
+ */
+function scopeGrantFromError(error: unknown): SyncStoreResult["needsScopeGrant"] | undefined {
+  if (!isShopifyAuthError(error)) return undefined;
+  const granted = error.tokenScopes ?? [];
+  const missing =
+    granted.length > 0
+      ? error.requiredScopes.filter(
+          (r) => !granted.some((g) => g.toLowerCase() === r.toLowerCase()),
+        )
+      : // Scopes endpoint unavailable (admin-created custom app): report the
+        // required set so the UI can still instruct precisely.
+        [...error.requiredScopes];
+  return {
+    missingScopes: missing,
+    grantedScopes: granted,
+    requiredScopes: [...error.requiredScopes],
+    detail: error.message,
+    kind: error.kind,
+  };
 }
 
 /** Upsert catalog rows into one tenant schema, deduped by SKU. */
@@ -140,6 +182,12 @@ export async function syncTenantStores(schema: string, storeId?: string): Promis
     }
 
     try {
+      // Fail fast on scope problems BEFORE the paged product pull: a token
+      // without read_products would otherwise surface only as a mid-pagination
+      // 403 with products already half-synced.
+      if (store.platform === "shopify") {
+        await validateShopifyTokenScopes(store.domain!, token);
+      }
       const items =
         store.platform === "shopify"
           ? await fetchShopifyProducts(store.domain!, token)
@@ -147,11 +195,21 @@ export async function syncTenantStores(schema: string, storeId?: string): Promis
       const synced = await upsertCatalogProducts(schema, store.id, items);
       results.push({ ...base, synced });
     } catch (error) {
-      results.push({
-        ...base,
-        synced: 0,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const scopeGrant = scopeGrantFromError(error);
+      if (scopeGrant) {
+        results.push({
+          ...base,
+          synced: 0,
+          error: scopeGrant.detail,
+          needsScopeGrant: scopeGrant,
+        });
+      } else {
+        results.push({
+          ...base,
+          synced: 0,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
   }
 

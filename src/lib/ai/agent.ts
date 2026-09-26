@@ -1,6 +1,7 @@
-import type { BalanceSheet, IncomeStatement, JournalEntry, Order, StoreStats } from "@/types";
+import type { BalanceSheet, IncomeStatement, JournalEntry, Order, Product, StoreStats, Store } from "@/types";
 import { categorizeTransaction, detectAnomalies, forecastCashFlow } from "@/lib/ai/categorizer";
 import { generateInsights } from "@/lib/ai/insights";
+import { runDeepStoreResearch } from "@/lib/analytics/storeResearch";
 import { round2 } from "@/lib/utils";
 
 /**
@@ -23,6 +24,9 @@ export interface AgentContext {
   monthly: Array<{ label: string; key: string; revenue: number; net_profit: number; cogs: number; fees: number }>;
   orders: Order[];
   journalEntries: JournalEntry[];
+  /** Optional: store + catalog for deep research (analytics & audit tools). */
+  store?: Store | null;
+  products?: Product[];
 }
 
 export interface AgentAnswer {
@@ -144,6 +148,43 @@ function buildTools(ctx: AgentContext) {
       ].join("\n");
     },
 
+    analytics: (): string => {
+      if (!ctx.store) return "Connect a store first — deep analytics need a live store to analyze.";
+      const a = runDeepStoreResearch(ctx.store, ctx.orders, ctx.products ?? [], ctx.journalEntries).analytics;
+      const cur = ctx.currency;
+      const lines = [
+        `**Deep analytics — ${ctx.storeName} (last ${a.periodDays}d, ${a.ordersAnalyzed} orders)**`,
+        `• Gross margin ${(a.grossMargin * 100).toFixed(1)}% · net margin ${(a.netMargin * 100).toFixed(1)}% · AOV ${a.aov.toFixed(2)} ${cur}`,
+        `• Cost structure: COGS ${(a.cogsRate * 100).toFixed(0)}% + fees ${(a.feeRate * 100).toFixed(1)}% of net sales; refunds ${(a.refundRate * 100).toFixed(1)}% of gross`,
+      ];
+      if (a.roas != null) {
+        lines.push(`• ROAS: ${a.roas.toFixed(2)}× (net sales ÷ ${a.adSpend.amount?.toFixed(0)} ${cur} ad spend)`);
+      } else {
+        lines.push(`• ROAS: placeholder — connect ad spend (store.config.adSpend or an ads integration) to unlock it.`);
+      }
+      if (a.topSkus.length > 0) {
+        lines.push(
+          `• Top SKUs: ${a.topSkus.slice(0, 3).map((s) => `${s.name} (${s.revenue.toFixed(0)} ${cur}, ${(s.margin * 100).toFixed(0)}% margin)`).join(" · ")}`,
+        );
+      }
+      if (a.lossMakingSkus.length > 0) {
+        lines.push(`• ⚠ Loss makers: ${a.lossMakingSkus.slice(0, 3).map((s) => `${s.name} (${s.profit.toFixed(0)} ${cur})`).join(" · ")}`);
+      }
+      for (const w of a.inventoryWarnings.slice(0, 3)) lines.push(`• [${w.severity.toUpperCase()}] ${w.title}`);
+      return lines.join("\n");
+    },
+
+    audit: (): string => {
+      if (!ctx.store) return "Connect a store first — the audit runs over a live store's orders, catalog and ledger.";
+      const report = runDeepStoreResearch(ctx.store, ctx.orders, ctx.products ?? [], ctx.journalEntries).audit;
+      const head = `**Store health audit — score ${report.healthScore}/100 (grade ${report.healthGrade})**`;
+      const lines = report.findings.map((f) => {
+        const mark = f.severity === "pass" ? "✓" : f.severity === "critical" ? "⛔" : f.severity === "warning" ? "⚠" : "ℹ";
+        return `${mark} ${f.title}${f.severity !== "pass" && f.recommendation ? `\n   ↳ ${f.recommendation}` : ""}`;
+      });
+      return [head, ...lines].join("\n");
+    },
+
     overview: (): string => {
       const insights = generateInsights({
         stats: ctx.stats,
@@ -174,6 +215,8 @@ function routeQuestion(question: string): keyof ReturnType<typeof buildTools> | 
   if (/\b(categorize|classify|which account|map .*(transaction|expense)|where does)\b/.test(q)) return "categorize";
   if (/\b(journal|entries|ledger|how many)\b/.test(q)) return "ledger";
   if (/\b(profit|margin|revenue|cogs|fees|p&l|income|earn)\b/.test(q)) return "profitability";
+  if (/\b(deep analytics|top (products|skus|sellers)|sku performance|roas|ad spend|best seller|loss maker|inventory warning)\b/.test(q)) return "analytics";
+  if (/\b(audit|store health|health score|health check|missing cogs|missing cost|below cost|catalog coverage)\b/.test(q)) return "audit";
   if (/\b(overview|summary|how am i|how are we|status|health)\b/.test(q)) return "overview";
   return "unknown";
 }
@@ -182,8 +225,8 @@ const DEFAULT_SUGGESTIONS = [
   "How profitable am I this month?",
   "Forecast my cash flow",
   "Any anomalies in my orders?",
-  "Where does 'Meta Ads 250' go in the books?",
-  "What's my cash position?",
+  "Run a store health audit",
+  "What are my top SKUs?",
 ];
 
 export async function askFinancialAgent(question: string, ctx: AgentContext): Promise<AgentAnswer> {
@@ -223,9 +266,13 @@ export async function askFinancialAgent(question: string, ctx: AgentContext): Pr
                 ? tools.categorize(question)
                 : route === "ledger"
                   ? tools.ledger(question)
-                  : route === "profitability"
-                    ? tools.profitability()
-                    : tools.overview();
+                  : route === "audit"
+                    ? tools.audit()
+                    : route === "analytics"
+                      ? tools.analytics()
+                      : route === "profitability"
+                        ? tools.profitability()
+                        : tools.overview();
 
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -279,6 +326,10 @@ export async function askFinancialAgent(question: string, ctx: AgentContext): Pr
       return { answer: tools.ledger(question), source: "ledger", suggestions: suggestionsFor("ledger") };
     case "profitability":
       return { answer: tools.profitability(), source: "profitability", suggestions: suggestionsFor("profitability") };
+    case "analytics":
+      return { answer: tools.analytics(), source: "profitability", suggestions: ["Run a store health audit", "Any anomalies?", "Forecast my cash flow"] };
+    case "audit":
+      return { answer: tools.audit(), source: "anomalies", suggestions: ["What are my top SKUs?", "How profitable am I?", "Give me an overview"] };
     case "overview":
       return { answer: tools.overview(), source: "general", suggestions: suggestionsFor("general") };
     default:

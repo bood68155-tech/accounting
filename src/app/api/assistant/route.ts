@@ -57,6 +57,8 @@ export async function POST(request: NextRequest) {
       monthly: overview.monthly,
       orders: overview.orders,
       journalEntries: ledger,
+      store: overview.store,
+      products: overview.products,
     };
 
     const result = await askFinancialAgent(question, ctx);

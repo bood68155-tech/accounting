@@ -26,6 +26,8 @@ on **Neon Postgres**, with tenant scoping enforced in the data layer.
 | **AR / AP** | Orders that arrive unpaid are booked as credit sales (Dr Accounts Receivable) and settled automatically when a payment event lands (`createCreditSaleEntry` / `createPaymentCollectionEntry`) |
 | **Catalog sync** | Pull products + unit costs from the Shopify Admin API and Salla Admin API (`/products`, `POST /api/products/sync`); catalog costs auto-fill COGS on every incoming order |
 | **AI engine** | Transaction categorization & ledger mapping, statistical anomaly detection, cash-flow forecasting, natural-language insights, and an embedded AI Financial Assistant chat (`src/lib/ai/`) |
+| **Deep store research** | Real-time business analytics (gross/net margins, AOV, fee & COGS share, top SKUs, ROAS-ready ad-spend placeholder), inventory warnings, and a continuous store-health **audit** (missing COGS, below-cost sales, anomalous transactions, refund spikes, catalog coverage, ledger balance) with a 0–100 health score (`src/lib/analytics/storeResearch.ts`, `GET /api/analytics/overview`) |
+| **Auth: Google + Email OTP** | "Continue with Google" (NextAuth v5 OAuth — first login auto-provisions the user + tenant schema) and a 6-digit email OTP that must be verified before any signup or password sign-in completes (`src/lib/auth/otp.ts`) |
 | **Multi-tenant isolation** | Schema-per-tenant: every workspace owns a dedicated Postgres schema; tenant queries are always schema-qualified in the data layer |
 | **Admin console** | Platform-wide `/admin` console aggregating every tenant schema |
 
@@ -100,6 +102,14 @@ Sign up with that email first (password ≥ 6 chars), then re-run the seed.
 4. Generate an auth secret: `openssl rand -base64 32` → `AUTH_SECRET`.
 5. Set provider secrets: `SHOPIFY_WEBHOOK_SECRET`, `STRIPE_WEBHOOK_SECRET`,
    `PAYPAL_WEBHOOK_ID` (webhooks reject unverified payloads when these are unset).
+6. *(Optional)* **Google sign-in**: create an OAuth client at
+   [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services
+   → Credentials, with redirect URI `<APP_URL>/api/auth/callback/google`, and set
+   `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. First login auto-provisions the
+   user + tenant schema.
+7. *(Optional)* **Email OTP delivery**: set `GMAIL_USER` + `GMAIL_APP_PASSWORD`
+   (Gmail app password) or `SMTP_URL` + `SMTP_FROM`. Without a transport, codes
+   print to the server console (and are shown in the UI in non-production).
 
 ## 🔗 Connecting a store (webhooks)
 
@@ -139,7 +149,7 @@ src/
 │   │   ├── orders/                 # normalized orders with true profit
 │   │   ├── ledger/                 # journal entries + chart of accounts
 │   │   └── reports/income-statement/
-│   ├── login | signup/             # NextAuth credentials auth
+│   ├── login | signup/             # Google OAuth + credentials + email OTP
 │   ├── admin/                      # platform-wide console
 │   ├── api/auth/                   # NextAuth handlers + signup/signin JSON endpoints
 │   └── api/webhooks/{shopify,stripe,paypal,woocommerce}/

@@ -9,7 +9,9 @@ import { LineChart } from "@/components/charts/line-chart";
 import { BarChart } from "@/components/charts/bar-chart";
 import { DonutChart } from "@/components/charts/donut-chart";
 import { ProfitCalculator } from "@/components/profit-calculator";
-import { IconArrowUp, IconCoin, IconOrders, IconSparkles, IconWebhook } from "@/components/icons";
+import { DeepAnalyticsPanel } from "@/components/deep-analytics-panel";
+import { runDeepStoreResearch } from "@/lib/analytics/storeResearch";
+import { IconActivity, IconArrowUp, IconCoin, IconOrders, IconSparkles, IconWebhook } from "@/components/icons";
 import { fetchStoreOverview, fetchLedger } from "@/lib/data/repository";
 import { generateInsights } from "@/lib/ai/insights";
 import { buildBalanceSheet } from "@/lib/accounting/balanceSheet";
@@ -124,6 +126,8 @@ export default async function DashboardPage() {
     storeName: store.name,
     currency,
   };
+
+  const deepResearch = runDeepStoreResearch(store, orders, data.products, ledgerEntries);
 
   const allocation = [
     { label: "Net profit", value: stats.total_net_profit, color: "#34d399" },
@@ -282,6 +286,18 @@ export default async function DashboardPage() {
 
         {/* AI insights */}
         <AiInsightsPanel storeName={store.name} currency={currency} snapshot={aiSnapshot} />
+
+        {/* Deep store research: analytics + continuous audit */}
+        <section aria-label="Deep store research">
+          <div className="mb-3 flex items-center gap-2">
+            <IconActivity className="h-4.5 w-4.5 text-emerald-400" />
+            <h2 className="text-sm font-semibold text-zinc-100">Deep store research</h2>
+            <p className="hidden text-xs text-zinc-500 sm:block">
+              Real-time business analytics · automated auditing · inventory warnings
+            </p>
+          </div>
+          <DeepAnalyticsPanel analytics={deepResearch.analytics} audit={deepResearch.audit} />
+        </section>
 
         {/* Profit calculator */}
         <div>
