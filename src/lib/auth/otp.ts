@@ -283,7 +283,10 @@ async function sendOtpEmail(
   // Preferred path when RESEND_API_KEY is set: Resend's REST API (no SMTP).
   const resendKey = process.env.RESEND_API_KEY?.trim();
   if (resendKey) {
-    const from = process.env.SMTP_FROM?.trim() || "X <onboarding@resend.dev>";
+    const from =
+      process.env.SMTP_FROM?.trim() ||
+      process.env.EMAIL_FROM?.trim() ||
+      "X <onboarding@resend.dev>";
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: {
@@ -295,11 +298,15 @@ async function sendOtpEmail(
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      console.error(
-        `[otp] RESEND ERROR (${res.status}) for ${email}: ${body.slice(0, 300)}\n` +
-          `[otp] >>> FALLBACK: the OTP code is ${code} (valid ${OTP_TTL_MINUTES} min — enter it manually).`,
-      );
-      return { ok: true, via: "console" };
+      console.error(`[otp] RESEND ERROR (${res.status}) for ${email}: ${body.slice(0, 300)}`);
+      // Surface the failure to the caller: the UI must never report a code as
+      // "sent" when no email went out. The code stays valid in the DB, so a
+      // retry after delivery is fixed still works.
+      return {
+        ok: false,
+        error: "Could not send the verification code — email delivery failed. Please try again.",
+        via: "email",
+      };
     }
     return { ok: true, via: "email" };
   }
