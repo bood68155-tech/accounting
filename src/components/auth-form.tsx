@@ -126,7 +126,11 @@ export function AuthForm({ mode }: { mode: Mode }) {
       setCooldown(45);
       if (data.devCode) {
         setDevCode(data.devCode);
-        setDeliveryNote("Dev mode: no email transport configured — code shown below.");
+        setDeliveryNote(
+          data.delivery === "console"
+            ? "Dev bypass active — use the code below (no email was sent)."
+            : "Dev mode: code shown below.",
+        );
       } else {
         setDeliveryNote(`Code sent to ${email} — check your inbox (and spam folder).`);
       }

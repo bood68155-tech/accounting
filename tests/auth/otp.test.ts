@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import bcrypt from "bcryptjs";
-import { issueOtp, verifyOtp, OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS } from "@/lib/auth/otp";
+import { issueOtp, verifyOtp, getDevMasterCode, OTP_TTL_MINUTES, OTP_MAX_ATTEMPTS } from "@/lib/auth/otp";
 
 /**
  * Unit tests for the 6-digit email OTP library (issue + verify + limits).
@@ -100,6 +100,45 @@ beforeEach(() => {
   delete process.env.SMTP_URL;
   delete process.env.GMAIL_USER;
   delete process.env.GMAIL_APP_PASSWORD;
+  delete process.env.RESEND_API_KEY;
+  delete process.env.OTP_DEV_MASTER_CODE;
+  delete process.env.OTP_ALLOW_INSECURE_MASTER_CODE;
+});
+
+describe("getDevMasterCode (dev bypass gate)", () => {
+  it("is disabled when OTP_DEV_MASTER_CODE is unset", () => {
+    expect(getDevMasterCode()).toBeNull();
+  });
+
+  it("returns the code when set outside production", () => {
+    process.env.OTP_DEV_MASTER_CODE = "123456";
+    expect(getDevMasterCode()).toBe("123456");
+  });
+
+  it("ignores non-6-digit values", () => {
+    process.env.OTP_DEV_MASTER_CODE = "12ab";
+    expect(getDevMasterCode()).toBeNull();
+    process.env.OTP_DEV_MASTER_CODE = "1234567";
+    expect(getDevMasterCode()).toBeNull();
+  });
+
+  it("refuses to activate in production without the explicit override", () => {
+    // process.env.NODE_ENV is typed read-only; tests need to simulate it.
+    const env = process.env as { NODE_ENV?: string };
+    const originalEnv = env.NODE_ENV;
+    try {
+      env.NODE_ENV = "production";
+      process.env.OTP_DEV_MASTER_CODE = "123456";
+      expect(getDevMasterCode()).toBeNull();
+
+      process.env.OTP_ALLOW_INSECURE_MASTER_CODE = "true";
+      expect(getDevMasterCode()).toBe("123456");
+    } finally {
+      // Restore — a NODE_ENV leak would disable devCode for every later test.
+      if (originalEnv === undefined) delete env.NODE_ENV;
+      else env.NODE_ENV = originalEnv;
+    }
+  });
 });
 
 describe("issueOtp", () => {
@@ -182,6 +221,24 @@ describe("issueOtp", () => {
       consoleInfo.mockRestore();
     }
   });
+
+  it("master-code bypass: skips the database and email entirely, returns the fixed code", async () => {
+    process.env.OTP_DEV_MASTER_CODE = "123456";
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      // Even with a rate-limited inbox, the bypass must still succeed — no DB
+      // lookups happen at all on this path.
+      h.state.selectResult = [0, 1, 2].map((i) => ({ createdAt: new Date(Date.now() - i * 60_000) }));
+
+      const result = await issueOtp("bypass@shop.com", "login");
+      expect(result.ok).toBe(true);
+      expect(result.devCode).toBe("123456");
+      expect(result.delivery).toBe("console");
+      expect(h.state.rows).toHaveLength(0); // nothing persisted
+    } finally {
+      consoleInfo.mockRestore();
+    }
+  });
 });
 
 describe("verifyOtp", () => {
@@ -255,5 +312,45 @@ describe("verifyOtp", () => {
     const code = await issueFor("Case@Shop.com", "login");
     const result = await verifyOtp("CASE@SHOP.COM", "login", code);
     expect(result.ok).toBe(true);
+  });
+
+  it("master-code bypass: the fixed code verifies any email without a DB row", async () => {
+    process.env.OTP_DEV_MASTER_CODE = "123456";
+    const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
+    try {
+      // No code was ever issued for this email — the master code still works.
+      h.state.selectResult = [];
+      const result = await verifyOtp("ghost@shop.com", "signup", "123456");
+      expect(result.ok).toBe(true);
+
+      // The master code works for login purpose too.
+      const loginResult = await verifyOtp("ghost@shop.com", "login", "123456");
+      expect(loginResult.ok).toBe(true);
+    } finally {
+      consoleInfo.mockRestore();
+    }
+  });
+
+  it("master-code bypass disabled: the same code is rejected normally", async () => {
+    // No OTP_DEV_MASTER_CODE — "123456" must go through the normal path and
+    // fail because no code was issued for this email.
+    h.state.selectResult = [];
+    const result = await verifyOtp("ghost@shop.com", "signup", "123456");
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/no active code/i);
+  });
+
+  it("normal codes still work while the master-code bypass is enabled", async () => {
+    process.env.OTP_DEV_MASTER_CODE = "999999";
+    const code = await issueFor("both@shop.com");
+
+    // The regular random-code path is untouched by the bypass.
+    const result = await verifyOtp("both@shop.com", "signup", code);
+    expect(result.ok).toBe(true);
+
+    // And the master code ALSO verifies (any email, any purpose).
+    h.state.selectResult = [];
+    const master = await verifyOtp("other@shop.com", "login", "999999");
+    expect(master.ok).toBe(true);
   });
 });

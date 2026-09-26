@@ -12,15 +12,47 @@ import { requireDb, publicSchema } from "@/lib/db";
  *   • Stored as bcrypt hashes — plaintext exists only inside the email.
  *   • 10-minute expiry, max 5 verification attempts, single use.
  *   • Per-email rate limit: 3 codes / 15 minutes (prevents email bombing).
- *   • Delivery: SMTP via nodemailer (SMTP_URL env) or Gmail app-password
- *     (GMAIL_USER + GMAIL_APP_PASSWORD). Without transport config, codes are
- *     logged to the server console in dev so the flow stays testable.
+ *   • Delivery: Resend API (RESEND_API_KEY), SMTP via nodemailer (SMTP_URL),
+ *     or Gmail app-password (GMAIL_USER + GMAIL_APP_PASSWORD). Without any
+ *     transport, codes are logged to the server console in dev.
+ *   • Dev bypass: set OTP_DEV_MASTER_CODE (e.g. 123456) to verify ANY email
+ *     with that fixed code — email delivery is skipped entirely, so login and
+ *     signup work immediately when Resend/SMTP is down. Refused in production
+ *     unless OTP_ALLOW_INSECURE_MASTER_CODE=true is explicitly set.
  */
 
 export const OTP_TTL_MINUTES = 10;
 export const OTP_MAX_ATTEMPTS = 5;
 const OTP_RATE_LIMIT = { count: 3, windowMinutes: 15 };
 const OTP_RESEND_COOLDOWN_SECONDS = 45;
+
+/**
+ * The dev/test master code, when enabled. Returns null (disabled) when:
+ *   • OTP_DEV_MASTER_CODE is unset, or
+ *   • the app runs in production without OTP_ALLOW_INSECURE_MASTER_CODE=true
+ *     (a hard safety gate — this code would otherwise open ANY account), or
+ *   • the value is not a 6-digit code.
+ */
+export function getDevMasterCode(): string | null {
+  const code = process.env.OTP_DEV_MASTER_CODE?.trim();
+  if (!code) return null;
+  if (
+    process.env.NODE_ENV === "production" &&
+    process.env.OTP_ALLOW_INSECURE_MASTER_CODE !== "true"
+  ) {
+    console.warn(
+      "[otp] OTP_DEV_MASTER_CODE is set but IGNORED: the app is running in production. " +
+        "Remove it, or set OTP_ALLOW_INSECURE_MASTER_CODE=true if you truly mean it (unsafe).",
+    );
+    return null;
+  }
+  return /^\d{6}$/.test(code) ? code : null;
+}
+
+/** True when the fixed dev master code bypass is active. */
+export function isMasterCodeEnabled(): boolean {
+  return getDevMasterCode() != null;
+}
 
 export type OtpPurpose = "signup" | "login";
 
@@ -48,10 +80,11 @@ export function isValidEmail(email: string): boolean {
   return EMAIL_RE.test(email);
 }
 
-/** True when an SMTP transport is configured (otherwise codes log to console). */
+/** True when an email transport (Resend/SMTP/Gmail) is configured. */
 export function isEmailTransportConfigured(): boolean {
   return Boolean(
-    (process.env.SMTP_URL && process.env.SMTP_FROM) ||
+    process.env.RESEND_API_KEY ||
+      (process.env.SMTP_URL && process.env.SMTP_FROM) ||
       (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD),
   );
 }
@@ -64,6 +97,16 @@ export async function issueOtp(rawEmail: string, purpose: OtpPurpose): Promise<I
   const email = rawEmail.trim().toLowerCase();
   if (!isValidEmail(email)) {
     return { ok: false, error: "Enter a valid email address.", delivery: "console" };
+  }
+
+  // Dev bypass: master code active → no DB row, no email delivery. The UI
+  // receives the fixed code via devCode so login/signup is instant.
+  const masterCode = getDevMasterCode();
+  if (masterCode) {
+    console.info(
+      `[otp] DEV MASTER CODE ACTIVE — verify ${email} (${purpose}) with "${masterCode}". Email delivery is bypassed.`,
+    );
+    return { ok: true, delivery: "console", devCode: masterCode };
   }
 
   const db = requireDb();
@@ -144,6 +187,13 @@ export async function verifyOtp(
 
   if (!isValidEmail(email)) return { ok: false, error: "Enter a valid email address." };
   if (!/^\d{6}$/.test(code)) return { ok: false, error: "Enter the 6-digit code from your email." };
+
+  // Dev bypass: the fixed master code verifies any email when enabled.
+  const masterCode = getDevMasterCode();
+  if (masterCode && code === masterCode) {
+    console.info(`[otp] DEV MASTER CODE used for ${email} (${purpose}) — bypass accepted.`);
+    return { ok: true };
+  }
 
   const db = requireDb();
   const { otpCodes } = publicSchema;
@@ -230,6 +280,30 @@ async function sendOtpEmail(
     return { ok: true, via: "console" };
   }
 
+  // Preferred path when RESEND_API_KEY is set: Resend's REST API (no SMTP).
+  const resendKey = process.env.RESEND_API_KEY?.trim();
+  if (resendKey) {
+    const from = process.env.SMTP_FROM?.trim() || "X <onboarding@resend.dev>";
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ from, to: [email], subject, text, html }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(
+        `[otp] RESEND ERROR (${res.status}) for ${email}: ${body.slice(0, 300)}\n` +
+          `[otp] >>> FALLBACK: the OTP code is ${code} (valid ${OTP_TTL_MINUTES} min — enter it manually).`,
+      );
+      return { ok: true, via: "console" };
+    }
+    return { ok: true, via: "email" };
+  }
+
   const via: "email" | "console" = "email";
   try {
     // nodemailer is an optional dependency — imported lazily so builds and
@@ -251,6 +325,11 @@ async function sendOtpEmail(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[otp] failed to send email to ${email}: ${message}`);
+    // Delivery failed (e.g. Resend/SMTP down) — log the code loudly so the
+    // user can still complete login/signup from the server console.
+    console.error(
+      `[otp] >>> FALLBACK: the OTP code for ${email} is ${code} (valid ${OTP_TTL_MINUTES} min — enter it manually).`,
+    );
     return { ok: false, error: "Could not send the verification email — check SMTP settings and try again.", via };
   }
 }
