@@ -2,6 +2,7 @@ import { randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { and, desc, eq, lt } from "drizzle-orm";
 import { requireDb, publicSchema } from "@/lib/db";
+import { isResendConfigured, sendOtpViaResend } from "@/lib/auth/resend";
 
 /**
  * ── Email OTP (6-digit one-time passcodes) ────────────────────────────────────
@@ -172,14 +173,33 @@ export async function issueOtp(rawEmail: string, purpose: OtpPurpose): Promise<I
   const codeHash = await bcrypt.hash(code, 10);
   const expiresAt = new Date(now.getTime() + OTP_TTL_MINUTES * 60_000);
 
-  await db.insert(otpCodes).values({ email, codeHash, purpose, expiresAt });
+  // ── Requirement 3: persist BEFORE responding ───────────────────────────────
+  // The row MUST be committed before the HTTP 200 leaves the server, otherwise
+  // verifyOtp finds nothing and the user sees "No active code". The insert is
+  // awaited first; only after it resolves do we attempt delivery. If the send
+  // then fails, the code stays in the DB (it simply can't be delivered — the
+  // user retries the request, which is safe under the rate limits).
+  const inserted = await db
+    .insert(otpCodes)
+    .values({ email, codeHash, purpose, expiresAt })
+    .returning();
+  if (!inserted || inserted.length === 0) {
+    // The Drizzle client resolved without a persisted row — refuse to claim
+    // success, otherwise the user would hit "No active code" on verify.
+    return {
+      ok: false,
+      error: "Could not save the verification code — please try again.",
+      delivery: "console",
+    };
+  }
 
   // Housekeeping: drop stale codes opportunistically.
   await db.delete(otpCodes).where(lt(otpCodes.expiresAt, new Date(now.getTime() - 24 * 60 * 60_000)));
 
+  // ── Delivery: Resend API (canonical SDK + React Email), then SMTP fallbacks ──
   const sent = await sendOtpEmail(email, code, purpose);
   if (!sent.ok) {
-    return { ok: false, error: sent.error, delivery: "console" };
+    return { ok: false, error: "Could not send the verification code — email delivery failed. Please try again.", delivery: "console" };
   }
 
   return {
@@ -295,44 +315,34 @@ async function sendOtpEmail(
   const gmailPass = process.env.GMAIL_APP_PASSWORD?.trim();
   const smtpUrl = process.env.SMTP_URL?.trim();
 
-  // Preferred path when RESEND_API_KEY is set: Resend's REST API (no SMTP).
-  // Checked FIRST — a Resend-only setup (no SMTP_URL/Gmail) must never fall
-  // through to the console fallback below.
-  const resendKey = process.env.RESEND_API_KEY?.trim();
-  if (resendKey) {
-    const from =
-      process.env.SMTP_FROM?.trim() ||
-      process.env.EMAIL_FROM?.trim() ||
-      "X <onboarding@resend.dev>";
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ from, to: [email], subject, text, html }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      console.error(`[otp] RESEND ERROR (${res.status}) for ${email}: ${body.slice(0, 300)}`);
-      // 403 "merchant approval / testing emails to your own email address" —
-      // Resend's testing sender only delivers to the account owner. Treat any
-      // send failure as non-delivery:
-      //   • dev/test/preview → log the code to the server console and let the
-      //     caller expose it via devCode, so ANY email can complete the flow.
-      //   • production → surface a clean error, no code leakage.
-      if (isRelaxedOtpLimits()) {
-        console.error(`[otp] >>> DELIVERY FAILED — DEV FALLBACK: the OTP code for ${email} is ${code} (valid ${OTP_TTL_MINUTES} min).`);
-        return { ok: true, via: "console", devCode: code };
-      }
-      return {
-        ok: false,
-        error: "Could not send the verification code — email delivery failed. Please try again.",
-        via: "email",
-      };
+  // Preferred path when RESEND_API_KEY is set: Resend's API with the React
+  // Email template (canonical SDK pattern — see src/lib/auth/resend.ts).
+  // Checked FIRST — a Resend-only setup must never fall through to SMTP.
+  if (isResendConfigured()) {
+    const sent = await sendOtpViaResend(email, code, purpose, OTP_TTL_MINUTES);
+    if (sent.ok) return { ok: true, via: "email" };
+
+    console.error(`[otp] RESEND ERROR for ${email}: ${sent.error ?? "unknown"}`);
+    // Testing-sender limits only deliver to the account owner; treat any
+    // Resend failure as non-delivery:
+    //   • dev/test/preview → log the code and expose it via devCode so ANY
+    //     email can complete the flow.
+    //   • production → clean error, no code leakage.
+    if (isRelaxedOtpLimits()) {
+      console.error(`[otp] >>> DELIVERY FAILED — DEV FALLBACK: the OTP code for ${email} is ${code} (valid ${OTP_TTL_MINUTES} min).`);
+      return { ok: true, via: "console", devCode: code };
     }
-    return { ok: true, via: "email" };
+    // Production: fall back to the configured SMTP/Gmail transport before
+    // giving up — it may deliver where Resend cannot (e.g. unverified domain).
+    if (smtpUrl || (gmailUser && gmailPass)) {
+      const fallback = await sendViaNodemailer(email, subject, text, html);
+      if (fallback.ok) return { ok: true, via: "email" };
+    }
+    return {
+      ok: false,
+      error: "Could not send the verification code — email delivery failed. Please try again.",
+      via: "email",
+    };
   }
 
   // No Resend key: SMTP / Gmail app-password via nodemailer, or the dev-only
@@ -342,7 +352,26 @@ async function sendOtpEmail(
     return { ok: true, via: "console" };
   }
 
-  const via: "email" | "console" = "email";
+  // No Resend key, or Resend failed in production: SMTP / Gmail app-password.
+  return sendViaNodemailer(email, subject, text, html);
+}
+
+/** SMTP delivery via nodemailer (Gmail app-password or generic SMTP_URL). */
+async function sendViaNodemailer(
+  email: string,
+  subject: string,
+  text: string,
+  html: string,
+): Promise<{ ok: boolean; error?: string; via: "email" | "console"; devCode?: string }> {
+  const gmailUser = process.env.GMAIL_USER?.trim();
+  const gmailPass = process.env.GMAIL_APP_PASSWORD?.trim();
+  const smtpUrl = process.env.SMTP_URL?.trim();
+
+  if (!smtpUrl && !(gmailUser && gmailPass)) {
+    console.info(`[otp] EMAIL TRANSPORT NOT CONFIGURED — code for ${email}: (handled by caller)`);
+    return { ok: true, via: "console" };
+  }
+
   try {
     // nodemailer is an optional dependency — imported lazily so builds and
     // tests run without it when no transport is configured.
@@ -375,11 +404,6 @@ async function sendOtpEmail(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[otp] failed to send email to ${email}: ${message}`);
-    // Delivery failed (e.g. Resend/SMTP down) — log the code loudly so the
-    // user can still complete login/signup from the server console.
-    console.error(
-      `[otp] >>> FALLBACK: the OTP code for ${email} is ${code} (valid ${OTP_TTL_MINUTES} min — enter it manually).`,
-    );
-    return { ok: false, error: "Could not send the verification email — check SMTP settings and try again.", via };
+    return { ok: false, error: "Could not send the verification email — check SMTP settings and try again.", via: "email" };
   }
 }

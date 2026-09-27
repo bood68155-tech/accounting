@@ -26,6 +26,10 @@ const h = vi.hoisted(() => {
       lastSentCode: null as string | null,
       /** Select result returned by the mocked query chain. */
       selectResult: [] as Array<Record<string, unknown>>,
+      /** When true, the fake insert resolves .returning() with no rows. */
+      failNextInsert: false,
+      /** When true, the fake Resend module simulates a send failure. */
+      resendShouldFail: false,
     },
   };
 });
@@ -55,6 +59,10 @@ vi.mock("@/lib/db", () => ({
     }),
     insert: () => ({
       values: (vals: Record<string, unknown>) => {
+        if (h.state.failNextInsert) {
+          // Simulate a DB layer that resolves without persisting anything.
+          return { returning: () => Promise.resolve([]) };
+        }
         h.state.rows.push({
           id: `otp_${h.state.rows.length + 1}`,
           email: String(vals.email),
@@ -65,7 +73,9 @@ vi.mock("@/lib/db", () => ({
           expiresAt: vals.expiresAt as Date,
           createdAt: new Date(),
         });
-        return { returning: () => Promise.resolve([]) };
+        // Real Drizzle/Neon resolves .returning() with the persisted row —
+        // issueOtp refuses to report success unless a row comes back.
+        return { returning: () => Promise.resolve([h.state.rows[h.state.rows.length - 1]]) };
       },
     }),
     update: () => ({
@@ -88,6 +98,20 @@ vi.mock("@/lib/db", () => ({
 // Capture codes without configuring a real email transport.
 vi.mock("nodemailer", () => ({ default: { createTransport: () => { throw new Error("no transport in tests"); } } }));
 
+// The Resend delivery module is mocked: success captures the code, failure
+// simulates the testing-sender 403 rejection (canonical { error } shape).
+vi.mock("@/lib/auth/resend", () => ({
+  isResendConfigured: () => Boolean(process.env.RESEND_API_KEY?.trim()),
+  otpFromAddress: () => "StoreAccountant <onboarding@resend.dev>",
+  sendOtpViaResend: async (_email: string, code: string) => {
+    if (h.state.resendShouldFail) {
+      return { ok: false, via: "email" as const, error: "Resend: 403 testing-sender rejection" };
+    }
+    h.state.lastSentCode = code;
+    return { ok: true, via: "email" as const };
+  },
+}));
+
 function newestRow() {
   return h.state.rows[h.state.rows.length - 1];
 }
@@ -96,6 +120,8 @@ beforeEach(() => {
   h.state.rows = [];
   h.state.lastSentCode = null;
   h.state.selectResult = [];
+  h.state.failNextInsert = false;
+  h.state.resendShouldFail = false;
   process.env.AUTH_SECRET = "test-secret";
   delete process.env.SMTP_URL;
   delete process.env.GMAIL_USER;
@@ -224,26 +250,34 @@ describe("issueOtp", () => {
 
   it("Resend delivery failure in dev: logs the code and returns it via devCode so any email can proceed", async () => {
     process.env.RESEND_API_KEY = "re_test_key";
+    h.state.resendShouldFail = true; // simulate the testing-sender 403 rejection
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      // The Resend branch calls global fetch; simulate the testing-sender
-      // 403 rejection for a non-owner address.
-      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 403, text: async () => "403 testing-sender rejection" });
-      vi.stubGlobal("fetch", fetchMock);
-
       const result = await issueOtp("nonowner@shop.com", "signup");
       expect(result.ok).toBe(true);
       expect(result.delivery).toBe("console");
       expect(result.devCode).toMatch(/^\d{6}$/);
       expect(consoleError.mock.calls.some((args) => String(args[0]).includes(result.devCode!))).toBe(true);
 
-      // The code was still persisted — it verifies normally.
+      // The code was still persisted BEFORE the response — it verifies normally.
       h.state.selectResult = [newestRow()];
       const verify = await verifyOtp("nonowner@shop.com", "signup", result.devCode!);
       expect(verify.ok).toBe(true);
     } finally {
-      vi.unstubAllGlobals();
+      h.state.resendShouldFail = false;
       consoleError.mockRestore();
+    }
+  });
+
+  it("refuses to report success when the OTP row fails to persist (no 'No active code' trap)", async () => {
+    h.state.failNextInsert = true;
+    try {
+      const result = await issueOtp("persist-fail@shop.com", "signup");
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/could not save/i);
+      expect(h.state.rows).toHaveLength(0); // nothing persisted, nothing claimed
+    } finally {
+      h.state.failNextInsert = false;
     }
   });
 
