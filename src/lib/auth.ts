@@ -6,7 +6,6 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { requireDb, publicSchema, isDatabaseConfigured } from "@/lib/db";
-import { verifyVerifiedToken } from "@/lib/auth/verification";
 
 /**
  * ── Auth (NextAuth v5 / Auth.js: credentials + Google OAuth + email OTP) ──────
@@ -14,9 +13,8 @@ import { verifyVerifiedToken } from "@/lib/auth/verification";
  * (no session table needed). Google accounts sign in via OAuth — on first
  * login the user row + tenant schema are provisioned automatically.
  *
- * Email OTP flow: signup and password sign-in REQUIRE a short-lived
- * `otpToken` produced by /api/auth/otp/verify (6-digit code proven), passed
- * as a credential alongside email/password.
+ * Email OTP flow: OTP verifies the mailbox ONCE, during signup only. Login is
+ * plain email + password — no OTP is required for registered users.
  *
  * The user's tenant (id, name, schema) is resolved once at login and embedded
  * in the token, so every server-side read can scope itself to the tenant
@@ -65,18 +63,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   pages: { signIn: "/login" },
   providers: [
     Credentials({
-      credentials: { email: {}, password: {}, otpToken: {} },
+      credentials: { email: {}, password: {} },
       async authorize(raw) {
         if (!isDatabaseConfigured()) return null;
         const email = String(raw?.email ?? "").trim().toLowerCase();
         const password = String(raw?.password ?? "");
-        const otpToken = String(raw?.otpToken ?? "");
-        if (!email || !password || !otpToken) return null;
+        if (!email || !password) return null;
 
-        // The 6-digit code must have been verified moments ago — the token is
-        // bound to email + "login" + a 10-minute expiry (HMAC, AUTH_SECRET).
-        if (!verifyVerifiedToken(otpToken, email, "login")) return null;
-
+        // No OTP on login — the mailbox was proven once at signup. Registered
+        // users sign in with email + password only.
         const db = requireDb();
         const { users, profiles } = publicSchema;
 

@@ -22,7 +22,15 @@ export async function POST(request: NextRequest) {
   };
 
   const email = (body.email ?? "").trim().toLowerCase();
-  const purpose = body.purpose === "login" ? "login" : "signup";
+  // OTP verifies the mailbox once, at signup. Login-purpose tokens are never
+  // issued anymore.
+  const purpose = "signup" as const;
+  if (body.purpose === "login") {
+    return NextResponse.json(
+      { error: "Registered accounts sign in with email and password — no code needed." },
+      { status: 400 },
+    );
+  }
   const code = (body.code ?? "").trim();
 
   if (!email || !code) {

@@ -12,12 +12,14 @@ import { Logo } from "@/components/logo";
 import { cn } from "@/lib/utils";
 
 /**
- * ── Auth form: credentials + Google OAuth + 6-digit email OTP ─────────────────
- * Three clean steps:
- *   1. Credentials (email + password, or "Continue with Google").
- *   2. Verify — a 6-digit code is emailed before any account is created or a
- *      session is opened (OTP request → verify → short-lived verified token).
- *   3. Session — signup (or login) completes with the verified token attached.
+ * ── Auth form: credentials + Google OAuth + one-time signup OTP ────────────────
+ * Login (mode="login"):
+ *   1. Email + password → session. No OTP — the mailbox was verified once at
+ *      signup; registered users never see a code screen again.
+ * Signup (mode="signup"):
+ *   1. Email + password → 2. one-time 6-digit code emailed to prove mailbox
+ *      ownership → account created → 3. automatic sign-in (plain credentials).
+ * Google OAuth: unchanged (provisions the account on first login).
  */
 
 type Mode = "login" | "signup";
@@ -60,7 +62,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // OTP step state
+  // OTP step state (signup only)
   const [code, setCode] = useState<string[]>(["", "", "", "", "", ""]);
   const [codeSending, setCodeSending] = useState(false);
   const [devCode, setDevCode] = useState<string | null>(null);
@@ -82,8 +84,38 @@ export function AuthForm({ mode }: { mode: Mode }) {
     setError(null);
   }
 
-  // ── Step 1 → 2: request the OTP ────────────────────────────────────────────
-  async function handleCredentialsSubmit(e: React.FormEvent) {
+  // ── Login: direct email + password, no OTP ─────────────────────────────────
+  async function handleLoginSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    resetErrors();
+
+    if (!isEmailValid(email)) {
+      setError("Enter a valid email address.");
+      return;
+    }
+    if (password.length < 6) {
+      setError("Password must be at least 6 characters.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result = await signIn("credentials", { email, password, redirect: false });
+      if (result?.error) {
+        setError("Incorrect email or password.");
+        setLoading(false);
+        return;
+      }
+      router.push("/dashboard");
+      router.refresh();
+    } catch {
+      setError("Network error — please try again.");
+      setLoading(false);
+    }
+  }
+
+  // ── Signup step 1 → 2: request the one-time verification code ──────────────
+  async function handleSignupSubmit(e: React.FormEvent) {
     e.preventDefault();
     resetErrors();
 
@@ -109,7 +141,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
       const res = await fetch("/api/auth/otp/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, purpose: mode }),
+        body: JSON.stringify({ email, purpose: "signup" }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
@@ -145,8 +177,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
     }
   }
 
-  // ── Step 2: verify the 6 digits, then sign in / sign up ────────────────────
-  async function verifyAndContinue() {
+  // ── Signup step 2: verify the 6 digits → create account → auto sign-in ─────
+  async function verifyAndCreateAccount() {
     resetErrors();
     const joined = code.join("");
     if (!/^\d{6}$/.test(joined)) {
@@ -156,11 +188,12 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
     setVerifying(true);
     try {
-      // 1. Verify the code → short-lived verified token.
+      // 1. Verify the code → short-lived verified token (proof of mailbox
+      //    ownership, bound to email + purpose + 10-min expiry).
       const verifyRes = await fetch("/api/auth/otp/verify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, purpose: mode, code: joined }),
+        body: JSON.stringify({ email, purpose: "signup", code: joined }),
       });
       const verifyData = (await verifyRes.json().catch(() => ({}))) as {
         ok?: boolean;
@@ -173,33 +206,23 @@ export function AuthForm({ mode }: { mode: Mode }) {
         return;
       }
 
-      // 2. Complete the flow with the verified token.
-      if (mode === "signup") {
-        const signupRes = await fetch("/api/auth/signup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password, otpToken: verifyData.verifiedToken }),
-        });
-        const signupData = (await signupRes.json().catch(() => ({}))) as { error?: string };
-        if (!signupRes.ok) {
-          setError(signupData.error ?? "Could not create the account. Please try again.");
-          setVerifying(false);
-          return;
-        }
+      // 2. Create the account, presenting the verified token.
+      const signupRes = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, otpToken: verifyData.verifiedToken }),
+      });
+      const signupData = (await signupRes.json().catch(() => ({}))) as { error?: string };
+      if (!signupRes.ok) {
+        setError(signupData.error ?? "Could not create the account. Please try again.");
+        setVerifying(false);
+        return;
       }
 
-      const result = await signIn("credentials", {
-        email,
-        password,
-        otpToken: verifyData.verifiedToken,
-        redirect: false,
-      });
+      // 3. Sign in with plain credentials — no OTP, no token needed.
+      const result = await signIn("credentials", { email, password, redirect: false });
       if (result?.error) {
-        setError(
-          mode === "signup"
-            ? "Account created but sign-in failed — please sign in manually."
-            : "Incorrect email or password.",
-        );
+        setError("Account created but sign-in failed — please sign in manually.");
         setVerifying(false);
         return;
       }
@@ -244,7 +267,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     }
     if (e.key === "Enter") {
       e.preventDefault();
-      void verifyAndContinue();
+      void verifyAndCreateAccount();
     }
   }
 
@@ -292,7 +315,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   </>
                 )}
 
-                <form onSubmit={handleCredentialsSubmit} className="space-y-4">
+                <form onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit} className="space-y-4">
                   <div className="space-y-1.5">
                     <Label htmlFor="email">Email</Label>
                     <Input
@@ -322,12 +345,16 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   )}
 
                   <Button type="submit" className="w-full" disabled={loading || codeSending}>
-                    {loading || codeSending ? "Sending code…" : isLogin ? "Continue" : "Send verification code"}
+                    {loading
+                      ? isLogin ? "Signing in…" : "Sending code…"
+                      : isLogin ? "Sign in" : "Send verification code"}
                   </Button>
                 </form>
 
                 <p className="text-center text-[11px] leading-relaxed text-zinc-600">
-                  We&apos;ll email a 6-digit code to verify it&apos;s you before {isLogin ? "signing in" : "creating your account"}.
+                  {isLogin
+                    ? "Sign in with your email and password — no code needed."
+                    : "We'll email a 6-digit code once to verify it's you. After that, sign in with just your password."}
                 </p>
               </div>
             ) : (
@@ -369,8 +396,8 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>
                 )}
 
-                <Button type="button" className="w-full" onClick={() => void verifyAndContinue()} disabled={verifying}>
-                  {verifying ? "Verifying…" : isLogin ? "Verify & sign in" : "Verify & create account"}
+                <Button type="button" className="w-full" onClick={() => void verifyAndCreateAccount()} disabled={verifying}>
+                  {verifying ? "Creating account…" : "Verify & create account"}
                 </Button>
 
                 <div className="flex items-center justify-between text-xs">
