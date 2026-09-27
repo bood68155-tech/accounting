@@ -357,8 +357,20 @@ async function sendOtpEmail(
         })
       : nodemailer.createTransport(smtpUrl!);
 
-    const from = gmailUser ?? process.env.SMTP_FROM ?? "X <noreply@x.app>";
-    await transporter.sendMail({ from, to: email, subject, text, html });
+    // Gmail files mail into Spam when the From header doesn't match the
+    // authenticated account. Keep From strictly the Gmail user (display name
+    // via EMAIL_FROM_NAME) and set Reply-To to the same address.
+    let from: string;
+    let replyTo: string | undefined;
+    if (gmailUser && gmailPass) {
+      const name = process.env.EMAIL_FROM_NAME?.trim() || "StoreAccountant";
+      from = `${name} <${gmailUser}>`;
+      replyTo = gmailUser;
+    } else {
+      from = process.env.SMTP_FROM?.trim() || "X <noreply@x.app>";
+      replyTo = undefined;
+    }
+    await transporter.sendMail({ from, replyTo, to: email, subject, text, html });
     return { ok: true, via: "email" };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
