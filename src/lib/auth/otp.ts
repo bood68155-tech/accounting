@@ -12,9 +12,13 @@ import { requireDb, publicSchema } from "@/lib/db";
  *   • Stored as bcrypt hashes — plaintext exists only inside the email.
  *   • 10-minute expiry, max 5 verification attempts, single use.
  *   • Per-email rate limit: 3 codes / 15 minutes (prevents email bombing).
+ *   • Resend cooldown between codes: 5s in dev/test/preview, 45s in production.
  *   • Delivery: Resend API (RESEND_API_KEY), SMTP via nodemailer (SMTP_URL),
  *     or Gmail app-password (GMAIL_USER + GMAIL_APP_PASSWORD). Without any
- *     transport, codes are logged to the server console in dev.
+ *     transport, codes are logged to the server console in dev. When Resend
+ *     fails in dev/test/preview (e.g. testing-sender limits), the code is
+ *     logged to the server console and surfaced via devCode so ANY email can
+ *     complete the flow; production surfaces a clean error with no leakage.
  *   • Dev bypass: set OTP_DEV_MASTER_CODE (e.g. 123456) to verify ANY email
  *     with that fixed code — email delivery is skipped entirely, so login and
  *     signup work immediately when Resend/SMTP is down. Refused in production
@@ -24,7 +28,22 @@ import { requireDb, publicSchema } from "@/lib/db";
 export const OTP_TTL_MINUTES = 10;
 export const OTP_MAX_ATTEMPTS = 5;
 const OTP_RATE_LIMIT = { count: 3, windowMinutes: 15 };
-const OTP_RESEND_COOLDOWN_SECONDS = 45;
+
+/**
+ * True when OTP limits may be relaxed for fast iteration: local development,
+ * unit tests, and Vercel preview deployments. Production keeps the strict
+ * limits (45s resend cooldown, loud failures with no code leakage).
+ */
+export function isRelaxedOtpLimits(): boolean {
+  return (
+    process.env.NODE_ENV === "development" ||
+    process.env.NODE_ENV === "test" ||
+    process.env.VERCEL_ENV === "preview"
+  );
+}
+
+/** Seconds before another code may be requested — 5s in dev/preview, 45s in production. */
+export const OTP_RESEND_COOLDOWN_SECONDS = isRelaxedOtpLimits() ? 5 : 45;
 
 /**
  * The dev/test master code, when enabled. Returns null (disabled) when:
@@ -166,9 +185,11 @@ export async function issueOtp(rawEmail: string, purpose: OtpPurpose): Promise<I
   return {
     ok: true,
     delivery: sent.via,
-    // Expose the code ONLY in non-production with no transport configured,
-    // so the flow is testable locally without an email inbox.
-    devCode: process.env.NODE_ENV === "production" ? undefined : code,
+    // The sender may hand back a code (delivery-failure fallback in relaxed
+    // environments). Otherwise expose the code in dev/test/preview only when
+    // delivery went to the console (no transport) — never when an email was
+    // actually sent, and never in production.
+    devCode: sent.devCode ?? (isRelaxedOtpLimits() && sent.via === "console" ? code : undefined),
   };
 }
 
@@ -267,7 +288,7 @@ async function sendOtpEmail(
   email: string,
   code: string,
   purpose: OtpPurpose,
-): Promise<{ ok: boolean; error?: string; via: "email" | "console" }> {
+): Promise<{ ok: boolean; error?: string; via: "email" | "console"; devCode?: string }> {
   const { subject, text, html } = template(email, code, purpose);
 
   const gmailUser = process.env.GMAIL_USER?.trim();
@@ -295,9 +316,16 @@ async function sendOtpEmail(
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       console.error(`[otp] RESEND ERROR (${res.status}) for ${email}: ${body.slice(0, 300)}`);
-      // Surface the failure to the caller: the UI must never report a code as
-      // "sent" when no email went out. The code stays valid in the DB, so a
-      // retry after delivery is fixed still works.
+      // 403 "merchant approval / testing emails to your own email address" —
+      // Resend's testing sender only delivers to the account owner. Treat any
+      // send failure as non-delivery:
+      //   • dev/test/preview → log the code to the server console and let the
+      //     caller expose it via devCode, so ANY email can complete the flow.
+      //   • production → surface a clean error, no code leakage.
+      if (isRelaxedOtpLimits()) {
+        console.error(`[otp] >>> DELIVERY FAILED — DEV FALLBACK: the OTP code for ${email} is ${code} (valid ${OTP_TTL_MINUTES} min).`);
+        return { ok: true, via: "console", devCode: code };
+      }
       return {
         ok: false,
         error: "Could not send the verification code — email delivery failed. Please try again.",

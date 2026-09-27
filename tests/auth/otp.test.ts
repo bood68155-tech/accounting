@@ -198,13 +198,13 @@ describe("issueOtp", () => {
   it("enforces the resend cooldown after a fresh code", async () => {
     const consoleInfo = vi.spyOn(console, "info").mockImplementation(() => {});
     try {
-      // One code issued 10 seconds ago → inside the 45s cooldown.
-      h.state.selectResult = [{ createdAt: new Date(Date.now() - 10_000) }];
+      // One code issued 2 seconds ago → inside the 5s dev cooldown.
+      h.state.selectResult = [{ createdAt: new Date(Date.now() - 2_000) }];
 
       const result = await issueOtp("cooldown@shop.com", "login");
       expect(result.ok).toBe(false);
       expect(result.retryAfterSeconds).toBeGreaterThan(0);
-      expect(result.retryAfterSeconds).toBeLessThanOrEqual(45);
+      expect(result.retryAfterSeconds).toBeLessThanOrEqual(5);
     } finally {
       consoleInfo.mockRestore();
     }
@@ -219,6 +219,31 @@ describe("issueOtp", () => {
       expect(result.ok).toBe(true);
     } finally {
       consoleInfo.mockRestore();
+    }
+  });
+
+  it("Resend delivery failure in dev: logs the code and returns it via devCode so any email can proceed", async () => {
+    process.env.RESEND_API_KEY = "re_test_key";
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      // The Resend branch calls global fetch; simulate the testing-sender
+      // 403 rejection for a non-owner address.
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 403, text: async () => "403 testing-sender rejection" });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await issueOtp("nonowner@shop.com", "signup");
+      expect(result.ok).toBe(true);
+      expect(result.delivery).toBe("console");
+      expect(result.devCode).toMatch(/^\d{6}$/);
+      expect(consoleError.mock.calls.some((args) => String(args[0]).includes(result.devCode!))).toBe(true);
+
+      // The code was still persisted — it verifies normally.
+      h.state.selectResult = [newestRow()];
+      const verify = await verifyOtp("nonowner@shop.com", "signup", result.devCode!);
+      expect(verify.ok).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      consoleError.mockRestore();
     }
   });
 
