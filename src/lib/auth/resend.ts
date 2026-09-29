@@ -34,6 +34,35 @@ export function isResendConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY?.trim());
 }
 
+/**
+ * Build a helpful user-facing message from a Resend API failure.
+ * Resend's sandbox (testing) mode — an unverified `onboarding@resend.dev`
+ * sender — only delivers to the account owner's email; every other address
+ * is rejected (403 "You can only send testing emails to your own email
+ * address"). Detect that case and tell the user WHY, instead of a generic
+ * failure.
+ */
+export function resendSandboxErrorMessage(rawError: string): string {
+  const err = rawError.toLowerCase();
+  if (
+    err.includes("testing emails") ||
+    err.includes("test emails") ||
+    err.includes("only send testing") ||
+    err.includes("own email address") ||
+    err.includes("verify a domain") ||
+    err.includes("verify your domain") ||
+    (err.includes("403") && err.includes("resend"))
+  ) {
+    const owner = process.env.OTP_SANDBOX_OWNER_EMAIL?.trim() || "the account owner's email";
+    return (
+      "Email delivery is restricted by Resend's testing sandbox — until a custom domain is verified in Resend, " +
+      `codes can only be sent to ${owner}. ` +
+      "Try that address, or verify your domain at resend.com/domains to lift the restriction."
+    );
+  }
+  return rawError;
+}
+
 export async function sendOtpViaResend(
   email: string,
   code: string,
@@ -65,15 +94,12 @@ export async function sendOtpViaResend(
 
     if (error) {
       // Canonical SDK failure shape: { name, message }.
-      return {
-        ok: false,
-        via: "email",
-        error: `Resend: ${error.message ?? error.name ?? "send failed"}`,
-      };
+      const raw = `Resend: ${error.message ?? error.name ?? "send failed"}`;
+      return { ok: false, via: "email", error: resendSandboxErrorMessage(raw) };
     }
     return { ok: true, via: "email" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, via: "email", error: `Resend: ${message}` };
+    return { ok: false, via: "email", error: resendSandboxErrorMessage(`Resend: ${message}`) };
   }
 }

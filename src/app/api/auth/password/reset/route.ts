@@ -52,11 +52,27 @@ export async function POST(request: NextRequest) {
 
   // Guard against resetting Google-only accounts: they have no local
   // credential, so "resetting" would create a password behind the user's back.
-  const userRows = await db
-    .select({ id: users.id, disabled: users.disabled, passwordHash: users.passwordHash })
-    .from(users)
-    .where(eq(users.email, email))
-    .limit(1);
+  let userRows;
+  try {
+    userRows = await db
+      .select({ id: users.id, disabled: users.disabled, passwordHash: users.passwordHash })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+  } catch (error) {
+    // DB unreachable (stale DATABASE_URL, Neon outage…) — clean JSON, no empty 500.
+    console.error(
+      "[password-reset] DB unreachable while looking up user:",
+      error instanceof Error ? error.message : error,
+    );
+    return NextResponse.json(
+      {
+        error:
+          "The service is temporarily unavailable (database connection failed). Please try again in a few minutes.",
+      },
+      { status: 503 },
+    );
+  }
   const user = userRows[0];
   if (!user) {
     return NextResponse.json({ error: "No account found for this email." }, { status: 404 });

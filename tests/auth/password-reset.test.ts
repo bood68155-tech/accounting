@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resetOtpIssue, resetOtpConsume, OTP_TTL_MINUTES } from "@/lib/auth/otp";
+import { resendSandboxErrorMessage } from "@/lib/auth/resend";
 
 /**
  * Unit tests for the forgot-password flow's OTP helpers: resetOtpIssue (only
@@ -144,6 +145,26 @@ beforeEach(() => {
   delete process.env.RESEND_API_KEY;
   delete process.env.OTP_DEV_MASTER_CODE;
   delete process.env.OTP_ALLOW_INSECURE_MASTER_CODE;
+});
+
+describe("resendSandboxErrorMessage", () => {
+  it("detects Resend testing-sandbox rejections and explains the restriction", () => {
+    const raw = "Resend: You can only send testing emails to your own email address (user@x.com).";
+    const msg = resendSandboxErrorMessage(raw);
+    expect(msg).toMatch(/testing sandbox/i);
+    expect(msg).toMatch(/resend\.com\/domains/i);
+    expect(msg).not.toBe(raw);
+  });
+
+  it("detects the verify-your-domain variant", () => {
+    const msg = resendSandboxErrorMessage("Resend: Please verify a domain before sending to this address.");
+    expect(msg).toMatch(/testing sandbox/i);
+  });
+
+  it("passes unrelated errors through unchanged", () => {
+    const raw = "Resend: invalid from address";
+    expect(resendSandboxErrorMessage(raw)).toBe(raw);
+  });
 });
 
 describe("resetOtpIssue", () => {

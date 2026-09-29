@@ -31,11 +31,29 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Enter your email address." }, { status: 400 });
   }
 
-  const result = await resetOtpIssue(email);
+  let result;
+  try {
+    result = await resetOtpIssue(email);
+  } catch (error) {
+    // Last-resort net: never return an empty 500 — always JSON.
+    console.error(
+      "[password-reset] request crashed:",
+      error instanceof Error ? error.message : error,
+    );
+    return NextResponse.json(
+      {
+        error:
+          "The service is temporarily unavailable (database connection failed). Please try again in a few minutes.",
+      },
+      { status: 503 },
+    );
+  }
   if (!result.ok) {
+    const isDbOutage = result.errorCode === "db_unreachable";
+    const isSandbox = result.errorCode === "resend_sandbox";
     return NextResponse.json(
       { error: result.error, retryAfterSeconds: result.retryAfterSeconds },
-      { status: result.retryAfterSeconds ? 429 : 400 },
+      { status: result.retryAfterSeconds ? 429 : isDbOutage ? 503 : isSandbox ? 403 : 400 },
     );
   }
 

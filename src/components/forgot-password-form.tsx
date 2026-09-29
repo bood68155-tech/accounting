@@ -81,7 +81,15 @@ export function ForgotPasswordForm() {
         retryAfterSeconds?: number;
       };
       if (!res.ok || !data.ok) {
-        setError(data.error ?? "Could not send the reset code. Please try again.");
+        // The API returns JSON for every failure mode (bad request, rate
+        // limit, Resend sandbox restriction, DB outage). Fall back to a
+        // generic message only if the response body itself is unreadable.
+        setError(
+          data.error ??
+            (res.status >= 500
+              ? "The service is temporarily unavailable. Please try again in a few minutes."
+              : "Could not send the reset code. Please try again."),
+        );
         if (data.retryAfterSeconds) setCooldown(data.retryAfterSeconds);
         return false;
       }

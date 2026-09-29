@@ -79,12 +79,22 @@ export type OtpPurpose = "signup" | "login" | "password_reset";
 export interface IssueOtpResult {
   ok: boolean;
   error?: string;
+  /** Machine-readable failure class ("resend_sandbox", "db_unreachable"). */
+  errorCode?: string;
   /** Seconds until another code may be requested (rate limit cooldown). */
   retryAfterSeconds?: number;
   /** Dev-only: the code when no email transport is configured. */
   devCode?: string;
   /** How the code was delivered (for UI messaging). */
   delivery: "email" | "console";
+}
+
+/** Friendly, user-facing message for a database outage. */
+function databaseUnreachableMessage(): string {
+  return (
+    "The service is temporarily unavailable (database connection failed). " +
+    "Please try again in a few minutes — if it persists, the deployment's DATABASE_URL needs updating."
+  );
 }
 
 export interface VerifyOtpResult {
@@ -151,14 +161,27 @@ export async function issueOtp(rawEmail: string, purpose: OtpPurpose): Promise<I
   const { otpCodes } = publicSchema;
   const now = new Date();
 
+  let recent: Array<{ createdAt: Date }>;
   // Rate limit: OTP_RATE_LIMIT codes per window per email.
   const since = new Date(now.getTime() - OTP_RATE_LIMIT.windowMinutes * 60_000);
-  const recent = await db
-    .select({ createdAt: otpCodes.createdAt })
-    .from(otpCodes)
-    .where(and(eq(otpCodes.email, email), eq(otpCodes.purpose, purpose)))
-    .orderBy(desc(otpCodes.createdAt))
-    .limit(OTP_RATE_LIMIT.count + 2);
+  try {
+    recent = await db
+      .select({ createdAt: otpCodes.createdAt })
+      .from(otpCodes)
+      .where(and(eq(otpCodes.email, email), eq(otpCodes.purpose, purpose)))
+      .orderBy(desc(otpCodes.createdAt))
+      .limit(OTP_RATE_LIMIT.count + 2);
+  } catch (error) {
+    // DB unreachable (stale DATABASE_URL, Neon outage, pool exhausted…).
+    // Return a clean 503-able failure instead of an empty 500 crash.
+    console.error("[otp] DB unreachable while issuing code:", error instanceof Error ? error.message : error);
+    return {
+      ok: false,
+      errorCode: "db_unreachable",
+      error: databaseUnreachableMessage(),
+      delivery: "console",
+    };
+  }
 
   const inWindow = recent.filter((r) => r.createdAt >= since);
   if (inWindow.length >= OTP_RATE_LIMIT.count) {
@@ -215,9 +238,27 @@ export async function issueOtp(rawEmail: string, purpose: OtpPurpose): Promise<I
   await db.delete(otpCodes).where(lt(otpCodes.expiresAt, new Date(now.getTime() - 24 * 60 * 60_000)));
 
   // ── Delivery: Resend API (canonical SDK + React Email), then SMTP fallbacks ──
-  const sent = await sendOtpEmail(email, code, purpose);
+  let sent;
+  try {
+    sent = await sendOtpEmail(email, code, purpose);
+  } catch (error) {
+    // Delivery crashed (network, SDK bug) — never leak a raw stack to the API.
+    console.error("[otp] sendOtpEmail threw:", error instanceof Error ? error.message : error);
+    return {
+      ok: false,
+      error: "Could not send the code — email delivery failed. Please try again.",
+      delivery: "console",
+    };
+  }
   if (!sent.ok) {
-    return { ok: false, error: "Could not send the verification code — email delivery failed. Please try again.", delivery: "console" };
+    // Preserve the Resend sandbox hint ("restricted to the account owner")
+    // so the UI can explain the restriction instead of a generic failure.
+    return {
+      ok: false,
+      errorCode: sent.error?.includes("testing sandbox") ? "resend_sandbox" : undefined,
+      error: sent.error ?? "Could not send the verification code — email delivery failed. Please try again.",
+      delivery: "console",
+    };
   }
 
   return {
