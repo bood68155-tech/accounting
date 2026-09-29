@@ -38,10 +38,11 @@ export function DonutChart({
     }, []);
 
   return (
-    <div className="flex items-center gap-6">
+    <div className="flex flex-col items-center gap-6 sm:flex-row">
+      {/* Ring */}
       <div className="relative shrink-0" style={{ width: size, height: size }}>
         <svg viewBox="0 0 42 42" className="h-full w-full -rotate-90">
-          <circle cx="21" cy="21" r={radius} fill="none" stroke="#1f2127" strokeWidth="4.5" />
+          <circle cx="21" cy="21" r={radius} fill="none" stroke="#1f1f1f" strokeWidth="4.5" />
           {arcs.map((arc, i) => (
             <circle
               key={i}
@@ -53,32 +54,37 @@ export function DonutChart({
               strokeWidth="4.5"
               strokeDasharray={`${arc.dash} ${1 - arc.dash}`}
               strokeDashoffset={-arc.offset}
-              strokeLinecap="round"
+              strokeLinecap="butt"
               style={{ transition: "stroke-dasharray 0.4s ease" }}
             />
           ))}
         </svg>
         <div className="absolute inset-0 flex flex-col items-center justify-center">
           {centerValue && (
-            <span className="text-lg font-bold tracking-tight text-zinc-50 tabular-nums">
+            <span className="text-xl font-extrabold tracking-tight text-white tabular-nums">
               {centerValue}
             </span>
           )}
           {centerLabel && (
-            <span className="mt-0.5 text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-              {centerLabel}
-            </span>
+            <span className="type-kicker mt-1 text-zinc-500">{centerLabel}</span>
           )}
         </div>
       </div>
 
-      <div className="flex flex-col gap-2.5">
+      {/* Legend — sharp 1px joined grid cells */}
+      <div className="grid-join w-full flex-1 grid-cols-1">
         {segments.map((segment) => (
-          <div key={segment.label} className="flex items-center gap-2 text-xs">
-            <span className="h-2.5 w-2.5 rounded-sm" style={{ background: segment.color }} />
-            <span className="text-zinc-400">{segment.label}</span>
-            <span className="ml-auto pl-4 font-medium text-zinc-200 tabular-nums">
-              {total > 0 ? Math.round((segment.value / total) * 100) : 0}%
+          <div key={segment.label} className="!flex !items-center gap-3 !p-3">
+            {/* Square swatch — editorial color block */}
+            <span
+              className="h-3 w-3 shrink-0"
+              style={{ background: segment.color }}
+              aria-hidden
+            />
+            <span className="type-kicker truncate text-zinc-300">{segment.label}</span>
+            <span className="ml-auto text-sm font-extrabold text-white tabular-nums">
+              {total > 0 ? Math.round((segment.value / total) * 100) : 0}
+              <span className="ml-0.5 text-[10px] font-bold text-zinc-500">%</span>
             </span>
           </div>
         ))}

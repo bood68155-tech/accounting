@@ -130,9 +130,10 @@ export default async function DashboardPage() {
   const deepResearch = runDeepStoreResearch(store, orders, data.products, ledgerEntries);
 
   const allocation = [
-    { label: "Net profit", value: stats.total_net_profit, color: "#34d399" },
-    { label: "COGS", value: monthly.reduce((s, m) => s + m.cogs, 0), color: "#38bdf8" },
-    { label: "Gateway fees", value: monthly.reduce((s, m) => s + m.fees, 0), color: "#fbbf24" },
+    // Editorial palette: signal red / stark white / zinc grey
+    { label: "Net profit", value: stats.total_net_profit, color: "#ff3b00" },
+    { label: "COGS", value: monthly.reduce((s, m) => s + m.cogs, 0), color: "#ffffff" },
+    { label: "Gateway fees", value: monthly.reduce((s, m) => s + m.fees, 0), color: "#71717a" },
   ];
   const allocationTotal = allocation.reduce((s, a) => s + a.value, 0);
 
