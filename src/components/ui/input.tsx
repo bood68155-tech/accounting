@@ -1,11 +1,11 @@
 import { cn } from "@/lib/utils";
 
 /**
- * Refined field treatment: navy field surface, hairline border, crisp emerald
- * focus ring with soft halo, and a subtle hover lift of the border tone.
+ * Brutalist field: transparent black, 1px outline, sharp corners.
+ * Focus = signal-red border + hard white offset shadow. No soft halos.
  */
 export const inputClasses =
-  "w-full h-10 rounded-xl border border-zinc-800 bg-zinc-900/60 px-3.5 text-sm text-zinc-100 shadow-[inset 0_1px_2px_rgba(0,0,0,0.35)] placeholder:text-zinc-600 transition-[border-color,box-shadow,background-color] duration-200 hover:border-zinc-700 focus:outline-none focus:border-emerald-500/70 focus:bg-zinc-900/80 focus:ring-[3px] focus:ring-emerald-500/15";
+  "w-full h-12 rounded-none border border-zinc-700 bg-transparent px-4 text-sm text-white placeholder:text-zinc-600 transition-[border-color,box-shadow] duration-100 hover:border-zinc-500 focus:outline-none focus:border-accent focus:shadow-[4px_4px_0_0_#ffffff]";
 
 export function Input({
   className,

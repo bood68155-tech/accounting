@@ -61,9 +61,7 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
     <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
       {NAV.map((group) => (
         <div key={group.section}>
-          <p className="mb-2 px-3 text-[10px] font-semibold uppercase tracking-[0.14em] text-zinc-600">
-            {group.section}
-          </p>
+          <p className="type-kicker mb-2 px-3 text-zinc-600">{group.section}</p>
           <div className="space-y-0.5">
             {group.items.map((item) => {
               const active = isActiveHref(pathname, item.href);
@@ -74,23 +72,23 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
                   href={item.href}
                   onClick={onNavigate}
                   className={cn(
-                    "group relative flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition-all duration-200",
+                    "group relative flex items-center gap-3 px-3 py-2 text-sm font-medium uppercase tracking-[0.04em] transition-colors duration-100",
                     active
-                      ? "bg-emerald-500/[0.09] text-emerald-300"
-                      : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-100",
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-400 hover:bg-zinc-900 hover:text-white",
                   )}
                 >
-                  {/* Active indicator rail */}
+                  {/* Active indicator — signal red rail */}
                   <span
                     className={cn(
-                      "absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-emerald-400 transition-all duration-200",
+                      "absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 bg-accent transition-opacity duration-100",
                       active ? "opacity-100" : "opacity-0",
                     )}
                   />
                   <Icon
                     className={cn(
-                      "h-4.5 w-4.5 shrink-0 transition-colors duration-200",
-                      active ? "text-emerald-400" : "text-zinc-500 group-hover:text-zinc-300",
+                      "h-4.5 w-4.5 shrink-0 transition-colors duration-100",
+                      active ? "text-accent" : "text-zinc-500 group-hover:text-white",
                     )}
                   />
                   <span className="truncate">{item.label}</span>
@@ -108,15 +106,13 @@ function TenantFooter({ tenantName }: { tenantName: string }) {
   const router = useRouter();
 
   return (
-    <div className="border-t border-zinc-800/70 p-3">
-      <div className="rounded-xl border border-zinc-800/80 bg-zinc-900/50 p-3 transition-colors duration-200 hover:border-zinc-700/80">
-        <p className="truncate text-xs font-semibold text-zinc-200">{tenantName}</p>
+    <div className="border-t border-white p-3">
+      <div className="border border-white p-3">
+        <p className="truncate text-xs font-bold uppercase tracking-[0.06em] text-white">{tenantName}</p>
         <p className="mt-0.5 text-[11px] text-zinc-500">Isolated tenant workspace</p>
         <div className="mt-2.5 flex items-center gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse-dot" />
-          <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
-            Live sync
-          </span>
+          <span className="h-1.5 w-1.5 bg-accent animate-pulse-dot" />
+          <span className="type-kicker text-zinc-500">Live sync</span>
           <button
             type="button"
             onClick={() =>
@@ -125,7 +121,7 @@ function TenantFooter({ tenantName }: { tenantName: string }) {
                 router.refresh();
               })
             }
-            className="ml-auto rounded-md text-[10px] font-medium text-zinc-500 transition-colors duration-200 hover:text-red-400"
+            className="type-kicker ml-auto text-zinc-500 transition-colors duration-100 hover:text-accent"
           >
             Sign out
           </button>
@@ -155,9 +151,9 @@ export function Sidebar({ tenantName }: { tenantName: string }) {
   return (
     <>
       {/* Desktop rail */}
-      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-zinc-800/70 bg-zinc-950/60 backdrop-blur md:flex">
-        <div className="flex h-16 items-center border-b border-zinc-800/70 px-5">
-          <Link href="/dashboard" className="transition-opacity duration-200 hover:opacity-80">
+      <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-white bg-black md:flex">
+        <div className="flex h-16 items-center border-b border-white px-5">
+          <Link href="/dashboard" className="transition-opacity duration-100 hover:opacity-70">
             <Logo />
           </Link>
         </div>
@@ -166,18 +162,18 @@ export function Sidebar({ tenantName }: { tenantName: string }) {
       </aside>
 
       {/* Mobile top bar with menu trigger */}
-      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-zinc-800/70 bg-[#0a0d14]/85 px-4 backdrop-blur md:hidden">
+      <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white bg-black px-4 md:hidden">
         <button
           type="button"
           aria-label="Open navigation"
           onClick={() => setMobileOpen(true)}
-          className="flex h-9 w-9 items-center justify-center rounded-xl border border-zinc-800 bg-zinc-900/70 text-zinc-300 transition-colors duration-200 hover:border-zinc-700 hover:text-zinc-100"
+          className="flex h-9 w-9 items-center justify-center border border-white text-white transition-colors duration-100 hover:bg-white hover:text-black"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M4 6h16M4 12h16M4 18h16" />
           </svg>
         </button>
-        <Link href="/dashboard" className="transition-opacity duration-200 hover:opacity-80">
+        <Link href="/dashboard" className="transition-opacity duration-100 hover:opacity-70">
           <Logo size={24} />
         </Link>
         <span className="h-9 w-9" aria-hidden />
@@ -189,17 +185,17 @@ export function Sidebar({ tenantName }: { tenantName: string }) {
           <button
             type="button"
             aria-label="Close navigation"
-            className="animate-fade-in absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className="animate-fade-in absolute inset-0 bg-black/80"
             onClick={() => setMobileOpen(false)}
           />
-          <aside className="animate-drawer-in absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-zinc-800/70 bg-[#0a0d14] shadow-2xl">
-            <div className="flex h-14 items-center justify-between border-b border-zinc-800/70 px-4">
+          <aside className="animate-drawer-in absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col border-r border-white bg-black shadow-[8px_0_0_0_rgba(255,59,0,0.9)]">
+            <div className="flex h-14 items-center justify-between border-b border-white px-4">
               <Logo size={26} />
               <button
                 type="button"
                 aria-label="Close navigation"
                 onClick={() => setMobileOpen(false)}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 transition-colors duration-200 hover:bg-zinc-800/60 hover:text-zinc-100"
+                className="flex h-8 w-8 items-center justify-center text-zinc-400 transition-colors duration-100 hover:bg-zinc-900 hover:text-white"
               >
                 <IconX className="h-4 w-4" />
               </button>

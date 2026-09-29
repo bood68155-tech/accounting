@@ -23,7 +23,7 @@ export function TRow({ className, ...props }: React.HTMLAttributes<HTMLTableRowE
   return (
     <tr
       className={cn(
-        "border-b border-zinc-800/70 last:border-0 transition-colors hover:bg-zinc-800/25",
+        "border-b border-zinc-800 last:border-0 hover:bg-zinc-900",
         className,
       )}
       {...props}
@@ -35,7 +35,7 @@ export function THeadCell({ className, ...props }: React.ThHTMLAttributes<HTMLTa
   return (
     <th
       className={cn(
-        "px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-zinc-500",
+        "px-4 py-3 text-left text-[10px] font-bold uppercase tracking-[0.14em] text-zinc-400",
         className,
       )}
       {...props}

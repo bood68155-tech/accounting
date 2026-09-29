@@ -12,18 +12,19 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   if (!isDatabaseConfigured()) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-app px-6">
-        <div className="max-w-md rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-6 text-center">
-          <h1 className="text-base font-semibold text-zinc-50">Database is not configured</h1>
-          <p className="mt-2 text-sm leading-relaxed text-zinc-400">
+        <div className="max-w-md border border-white bg-black p-6 shadow-[8px_8px_0_0_#ff3b00]">
+          <p className="type-kicker text-accent">System / 00</p>
+          <h1 className="type-display mt-3 text-xl">Database is not configured</h1>
+          <p className="mt-3 text-sm leading-relaxed text-zinc-400">
             Add{" "}
-            <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs text-emerald-300">
+            <code className="border border-zinc-700 bg-black px-1.5 py-0.5 font-mono text-xs text-accent">
               DATABASE_URL
             </code>{" "}
             (your Neon pooled connection string) to{" "}
-            <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs text-emerald-300">
+            <code className="border border-zinc-700 bg-black px-1.5 py-0.5 font-mono text-xs text-accent">
               .env.local
             </code>
-            , run <code className="rounded bg-zinc-800 px-1 py-0.5 font-mono text-xs text-emerald-300">npm run db:migrate</code>,
+            , run <code className="border border-zinc-700 bg-black px-1.5 py-0.5 font-mono text-xs text-accent">npm run db:migrate</code>,
             then restart the dev server.
           </p>
         </div>

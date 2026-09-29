@@ -32,10 +32,11 @@ export function PinGate() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-app px-6">
+      <p className="type-kicker pointer-events-none absolute left-4 top-4 text-zinc-700 sm:left-6 sm:top-6">X / Admin — Restricted</p>
       <Card className="w-full max-w-sm animate-fade-up">
-        <CardHeader className="items-center pb-2 text-center">
-          <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">
-            <IconShield className="h-6 w-6" />
+        <CardHeader className="border-b border-white pb-4 text-center">
+          <div className="frame-icon mx-auto mb-3">
+            <IconShield className="h-6 w-6 text-accent" />
           </div>
           <CardTitle className="text-lg">Admin access</CardTitle>
           <CardDescription>Enter the admin PIN to open the console</CardDescription>

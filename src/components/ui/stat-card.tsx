@@ -1,6 +1,4 @@
 import type { ReactNode } from "react";
-import { Card } from "@/components/ui/card";
-import { Sparkline } from "@/components/charts/sparkline";
 import { cn } from "@/lib/utils";
 
 export interface StatCardProps {
@@ -21,32 +19,31 @@ export function StatCard({
   delta,
   icon,
   spark,
-  accent = "#34d399",
   invert,
 }: StatCardProps) {
   const positive = (delta ?? 0) >= 0;
   const showDelta = delta !== undefined;
 
   return (
-    <Card className="group relative overflow-hidden p-5 transition-colors hover:border-zinc-700">
-      <div className="flex items-start justify-between">
+    <div className="group relative border border-white bg-black p-5 transition-colors duration-100 hover:bg-zinc-950">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="text-xs font-medium uppercase tracking-wider text-zinc-500">{label}</p>
-          <p className="mt-2 text-2xl font-bold tracking-tight text-zinc-50 tabular-nums">
+          <p className="type-kicker text-zinc-500">{label}</p>
+          <p className="mt-2 text-2xl font-extrabold tracking-tight text-white tabular-nums sm:text-3xl">
             {value}
           </p>
-          <div className="mt-1.5 flex items-center gap-2 text-xs">
+          <div className="mt-2 flex items-center gap-2 text-xs">
             {showDelta && (
               <span
                 className={cn(
-                  "rounded-md px-1.5 py-0.5 font-medium",
+                  "px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]",
                   invert
                     ? positive
-                      ? "bg-red-500/10 text-red-400"
-                      : "bg-emerald-500/10 text-emerald-400"
+                      ? "bg-red-500 text-white"
+                      : "bg-emerald-500 text-black"
                     : positive
-                      ? "bg-emerald-500/10 text-emerald-400"
-                      : "bg-red-500/10 text-red-400",
+                      ? "bg-accent text-white"
+                      : "bg-red-500 text-white",
                 )}
               >
                 {positive ? "▲" : "▼"} {Math.abs(delta!).toFixed(1)}%
@@ -55,24 +52,27 @@ export function StatCard({
             {sublabel && <span className="text-zinc-500">{sublabel}</span>}
           </div>
         </div>
-        {icon && (
-          <div
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border"
-            style={{ borderColor: `${accent}33`, background: `${accent}14`, color: accent }}
-          >
-            {icon}
-          </div>
-        )}
+        {icon && <div className="frame-icon h-10 w-10 shrink-0">{icon}</div>}
       </div>
-      {spark && (
-        <div className="mt-3 -mb-1">
-          <Sparkline data={spark} stroke={accent} />
+      {spark && spark.length > 0 && (
+        <div className="mt-4 flex h-8 items-end gap-0.5">
+          {spark.map((v, i) => {
+            const max = Math.max(...spark);
+            const min = Math.min(...spark);
+            const range = Math.max(1, max - min);
+            const h = 15 + Math.round(((v - min) / range) * 85); // 15–100%
+            return (
+              <div
+                key={i}
+                className={cn("flex-1", i === spark.length - 1 ? "bg-white" : "bg-accent")}
+                style={{ height: `${h}%` }}
+              />
+            );
+          })}
         </div>
       )}
-      <div
-        className="pointer-events-none absolute -right-10 -top-10 h-28 w-28 rounded-full opacity-0 blur-2xl transition-opacity duration-300 group-hover:opacity-100"
-        style={{ background: `${accent}22` }}
-      />
-    </Card>
+      {/* Solid red hover rule along the top edge */}
+      <span className="pointer-events-none absolute left-0 top-0 h-0.5 w-0 bg-accent transition-all duration-150 group-hover:w-full" />
+    </div>
   );
 }

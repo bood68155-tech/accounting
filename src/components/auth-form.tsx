@@ -20,6 +20,9 @@ import { cn } from "@/lib/utils";
  *   1. Email + password → 2. one-time 6-digit code emailed to prove mailbox
  *      ownership → account created → 3. automatic sign-in (plain credentials).
  * Google OAuth: unchanged (provisions the account on first login).
+ *
+ * Presentation: editorial brutalist — flat black card, 1px white frame, hard
+ * signal-red offset shadow, ALL-CAPS headings, outlined OTP cells.
  */
 
 type Mode = "login" | "signup";
@@ -275,25 +278,27 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-app px-4 py-10 sm:px-6">
-      {/* Backdrop: hairline grid + one soft emerald glow for depth */}
-      <div className="pointer-events-none absolute inset-0">
-        <div className="bg-grid bg-grid-fade absolute inset-0" />
-        <div className="glow-emerald absolute -top-32 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full blur-3xl" />
-      </div>
+      {/* Editorial backdrop: numbered kicker, stark black — no glows */}
+      <p className="type-kicker pointer-events-none absolute left-4 top-4 text-zinc-700 sm:left-6 sm:top-6">
+        X / Accounts — {isLogin ? "01 Sign in" : "01 Register"}
+      </p>
+      <p className="type-kicker pointer-events-none absolute bottom-4 right-4 text-zinc-700 sm:bottom-6 sm:right-6">
+        Secure / Verified / Tenant-Isolated
+      </p>
 
-      <div className="animate-fade-up relative z-10 w-full max-w-[400px]">
+      <div className="animate-fade-up relative z-10 w-full max-w-[420px]">
         <div className="mb-8 flex justify-center">
-          <Link href="/" className="transition-opacity duration-200 hover:opacity-80">
-            <Logo size={36} />
+          <Link href="/" className="transition-opacity duration-100 hover:opacity-70">
+            <Logo size={38} />
           </Link>
         </div>
 
-        <Card className="glass-panel border-white/[0.07]">
-          <CardHeader className="p-6 pb-0 sm:p-7 sm:pb-0">
-            <CardTitle className="text-xl font-semibold tracking-tight text-zinc-50">
+        <Card className="shadow-[8px_8px_0_0_#ff3b00]">
+          <CardHeader className="border-b border-white p-6 pb-5">
+            <CardTitle className="text-2xl font-extrabold uppercase tracking-[-0.02em] text-white">
               {step === "verify" ? "Verify your email" : isLogin ? "Welcome back" : "Create your account"}
             </CardTitle>
-            <CardDescription className="mt-1 text-[13px] leading-relaxed text-zinc-400">
+            <CardDescription className="mt-1.5 text-[13px] leading-relaxed text-zinc-400">
               {step === "verify"
                 ? `Enter the 6-digit code we sent to ${email}`
                 : isLogin
@@ -301,31 +306,31 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   : "Start automating your bookkeeping"}
             </CardDescription>
           </CardHeader>
-          <CardContent className="p-6 pt-6 sm:p-7 sm:pt-6">
+          <CardContent className="p-6 pt-6">
             {step === "credentials" ? (
-              <div className="space-y-5">
+              <div className="space-y-6">
                 {googleEnabled && (
                   <>
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-11 w-full bg-transparent"
+                      className="h-12 w-full font-semibold uppercase tracking-[0.08em]"
                       onClick={handleGoogleSignIn}
                       disabled={googleLoading}
                     >
                       <GoogleIcon className="h-4 w-4" />
                       {googleLoading ? "Redirecting to Google…" : "Continue with Google"}
                     </Button>
-                    <div className="flex items-center gap-3 py-0.5" aria-hidden="true">
-                      <div className="h-px flex-1 bg-zinc-800" />
-                      <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-600">or</span>
-                      <div className="h-px flex-1 bg-zinc-800" />
+                    <div className="flex items-center gap-3" aria-hidden="true">
+                      <div className="h-px flex-1 bg-white" />
+                      <span className="type-kicker text-zinc-500">or</span>
+                      <div className="h-px flex-1 bg-white" />
                     </div>
                   </>
                 )}
 
-                <form onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit} className="space-y-4" noValidate>
-                  <div className="space-y-1.5">
+                <form onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit} className="space-y-5" noValidate>
+                  <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <Input
                       id="email"
@@ -337,13 +342,13 @@ export function AuthForm({ mode }: { mode: Mode }) {
                       onChange={(e) => setEmail(e.target.value)}
                     />
                   </div>
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label htmlFor="password">Password</Label>
                       {isLogin && (
                         <Link
                           href="/forgot-password"
-                          className="text-[11px] font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300"
+                          className="text-[11px] font-bold uppercase tracking-[0.1em] text-accent transition-colors duration-100 hover:text-white"
                         >
                           Forgot password?
                         </Link>
@@ -364,28 +369,30 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   {error && (
                     <p
                       role="alert"
-                      className="animate-scale-in rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5 text-xs leading-relaxed text-red-400"
+                      className="border border-red-500 bg-red-500/10 px-3 py-2.5 text-xs font-medium uppercase tracking-wide text-red-400"
                     >
                       {error}
                     </p>
                   )}
 
-                  <Button type="submit" className="h-11 w-full" disabled={loading || codeSending}>
+                  <Button type="submit" className="h-12 w-full font-semibold uppercase tracking-[0.08em]" disabled={loading || codeSending}>
                     {loading
                       ? isLogin ? "Signing in…" : "Sending code…"
                       : isLogin ? "Sign in" : "Send verification code"}
                   </Button>
                 </form>
 
-                <p className="text-center text-[11px] leading-relaxed text-zinc-500">
-                  {isLogin
-                    ? "Sign in with your email and password — no code needed."
-                    : "We'll email a 6-digit code once to verify it's you. After that, sign in with just your password."}
+                <p className="border-t border-zinc-800 pt-4 text-center text-[11px] uppercase tracking-[0.1em] text-zinc-500">
+                  {isLogin ? (
+                    <>No account yet?{" "}<Link href="/signup" className="font-bold text-accent transition-colors duration-100 hover:text-white">Sign up</Link></>
+                  ) : (
+                    <>Already have an account?{" "}<Link href="/login" className="font-bold text-accent transition-colors duration-100 hover:text-white">Sign in</Link></>
+                  )}
                 </p>
               </div>
             ) : (
-              <div className="space-y-5">
-                {/* 6-digit code boxes */}
+              <div className="space-y-6">
+                {/* 6-digit code cells — outlined, square, high-contrast */}
                 <div className="flex justify-center gap-2">
                   {code.map((digit, i) => (
                     <Input
@@ -400,11 +407,10 @@ export function AuthForm({ mode }: { mode: Mode }) {
                       autoComplete={i === 0 ? "one-time-code" : "off"}
                       maxLength={6}
                       className={cn(
-                        "h-12 w-10 rounded-xl px-0 text-center text-lg font-semibold tabular-nums transition-all duration-200 sm:w-11",
+                        "h-14 w-10 px-0 text-center text-xl font-bold tabular-nums sm:w-11",
                         digit
-                          ? "border-emerald-500/60 bg-emerald-500/[0.04] text-emerald-100"
-                          : "hover:border-zinc-700",
-                        "focus:border-emerald-500/70 focus:ring-[3px] focus:ring-emerald-500/15",
+                          ? "border-accent text-white"
+                          : "hover:border-zinc-500",
                       )}
                       aria-label={`Digit ${i + 1}`}
                     />
@@ -412,19 +418,19 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 </div>
 
                 {devCode && (
-                  <p className="rounded-xl border border-sky-500/25 bg-sky-500/[0.08] px-3 py-2.5 text-center font-mono text-sm tracking-[0.2em] text-sky-300">
+                  <p className="border border-white bg-white px-3 py-2.5 text-center font-mono text-sm font-bold tracking-[0.3em] text-black">
                     {devCode}
                   </p>
                 )}
                 {deliveryNote && !devCode && (
-                  <p className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2.5 text-center text-xs leading-relaxed text-emerald-300">
+                  <p className="border border-accent bg-accent/10 px-3 py-2.5 text-center text-xs font-medium uppercase tracking-wide text-accent">
                     {deliveryNote}
                   </p>
                 )}
                 {error && (
                   <p
                     role="alert"
-                    className="animate-scale-in rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5 text-xs leading-relaxed text-red-400"
+                    className="border border-red-500 bg-red-500/10 px-3 py-2.5 text-xs font-medium uppercase tracking-wide text-red-400"
                   >
                     {error}
                   </p>
@@ -432,17 +438,17 @@ export function AuthForm({ mode }: { mode: Mode }) {
 
                 <Button
                   type="button"
-                  className="h-11 w-full"
+                  className="h-12 w-full font-semibold uppercase tracking-[0.08em]"
                   onClick={() => void verifyAndCreateAccount()}
                   disabled={verifying}
                 >
                   {verifying ? "Creating account…" : "Verify & create account"}
                 </Button>
 
-                <div className="flex items-center justify-between text-xs">
+                <div className="flex items-center justify-between text-[11px] font-bold uppercase tracking-[0.1em]">
                   <button
                     type="button"
-                    className="rounded-md text-zinc-500 transition-colors duration-200 hover:text-zinc-300 disabled:opacity-50"
+                    className="text-zinc-500 transition-colors duration-100 hover:text-white disabled:opacity-40"
                     onClick={() => {
                       setStep("credentials");
                       setError(null);
@@ -453,31 +459,17 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   </button>
                   <button
                     type="button"
-                    className="rounded-md font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300 disabled:opacity-50"
+                    className="text-accent transition-colors duration-100 hover:text-white disabled:opacity-40"
                     onClick={() => void requestOtp()}
                     disabled={cooldown > 0 || codeSending || verifying}
                   >
-                    {codeSending ? "Sending…" : cooldown > 0 ? `Resend code in ${cooldown}s` : "Resend code"}
+                    {codeSending ? "Sending…" : cooldown > 0 ? `Resend in ${cooldown}s` : "Resend code"}
                   </button>
                 </div>
               </div>
             )}
-
-            {step === "credentials" && (
-              <p className="mt-6 border-t border-zinc-800/70 pt-4 text-center text-xs text-zinc-500">
-                {isLogin ? (
-                  <>No account yet?{" "}<Link href="/signup" className="font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300">Sign up</Link></>
-                ) : (
-                  <>Already have an account?{" "}<Link href="/login" className="font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300">Sign in</Link></>
-                )}
-              </p>
-            )}
           </CardContent>
         </Card>
-
-        <p className="mt-6 text-center text-[11px] leading-relaxed text-zinc-600">
-          Secured by verified email, encrypted credentials and tenant-isolated data
-        </p>
       </div>
     </div>
   );
