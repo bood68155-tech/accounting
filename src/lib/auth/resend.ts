@@ -37,13 +37,18 @@ export function isResendConfigured(): boolean {
 export async function sendOtpViaResend(
   email: string,
   code: string,
-  purpose: "signup" | "login",
+  purpose: "signup" | "login" | "password_reset",
   minutes: number,
 ): Promise<SendOtpResult> {
   const apiKey = process.env.RESEND_API_KEY?.trim();
   if (!apiKey) {
     return { ok: false, via: "console", error: "RESEND_API_KEY is not configured." };
   }
+
+  // Password-reset emails carry the dedicated "Reset Your Password" subject;
+  // signup/login keep the verification-code subject.
+  const subject =
+    purpose === "password_reset" ? "Reset Your Password" : `Your verification code: ${code}`;
 
   try {
     // Lazy import keeps builds/tests working without the SDK at module load.
@@ -53,7 +58,7 @@ export async function sendOtpViaResend(
     const { error } = await resend.emails.send({
       from: otpFromAddress(),
       to: [email],
-      subject: `Your verification code: ${code}`,
+      subject,
       replyTo: process.env.EMAIL_REPLY_TO?.trim() || undefined,
       react: OtpEmail({ code, purpose, minutes }),
     });

@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { and, desc, eq, lt } from "drizzle-orm";
-import { requireDb, publicSchema } from "@/lib/db";
+import { isDatabaseConfigured, requireDb, publicSchema } from "@/lib/db";
 import { isResendConfigured, sendOtpViaResend } from "@/lib/auth/resend";
 
 /**
@@ -74,7 +74,7 @@ export function isMasterCodeEnabled(): boolean {
   return getDevMasterCode() != null;
 }
 
-export type OtpPurpose = "signup" | "login";
+export type OtpPurpose = "signup" | "login" | "password_reset";
 
 export interface IssueOtpResult {
   ok: boolean;
@@ -107,6 +107,24 @@ export function isEmailTransportConfigured(): boolean {
       (process.env.SMTP_URL && process.env.SMTP_FROM) ||
       (process.env.GMAIL_USER && process.env.GMAIL_APP_PASSWORD),
   );
+}
+
+/**
+ * True when a user account exists for this email (any credential kind).
+ * The forgot-password flow uses it so a reset code is only issued for known
+ * accounts; it must never be called before basic rate limiting (it hits the
+ * users table directly).
+ */
+export async function isEmailUsed(email: string): Promise<boolean> {
+  if (!isDatabaseConfigured()) return false;
+  const db = requireDb();
+  const { users } = publicSchema;
+  const rows = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(eq(users.email, email.trim().toLowerCase()))
+    .limit(1);
+  return rows.length > 0;
 }
 
 /**
@@ -275,20 +293,113 @@ export async function verifyOtp(
   return { ok: true };
 }
 
+// ── Password reset (forgot-password flow) ──────────────────────────────────
+
+/**
+ * Issue a password-reset OTP: verifies the account EXISTS (the forgot-password
+ * flow should tell users to sign up when they have no account), then delegates
+ * to issueOtp with the "password_reset" purpose. The reset email is sent via
+ * the Resend API with the dedicated "Reset Your Password" subject.
+ */
+export async function resetOtpIssue(rawEmail: string): Promise<IssueOtpResult> {
+  const email = rawEmail.trim().toLowerCase();
+  if (!isValidEmail(email)) {
+    return { ok: false, error: "Enter a valid email address.", delivery: "console" };
+  }
+  if (!(await isEmailUsed(email))) {
+    return {
+      ok: false,
+      error: "No account found for this email — sign up first.",
+      delivery: "console",
+    };
+  }
+  return issueOtp(email, "password_reset");
+}
+
+export interface ConsumeOtpResult {
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Verify AND permanently consume a password-reset OTP in one step. Unlike
+ * verifyOtp (which marks the row consumed but keeps it for auditing), this
+ * DELETEs the row only after the bcrypt comparison succeeds, so a verified
+ * code can never be replayed. Expired/burned rows are also removed.
+ */
+export async function resetOtpConsume(rawEmail: string, rawCode: string): Promise<ConsumeOtpResult> {
+  const email = rawEmail.trim().toLowerCase();
+  const code = rawCode.trim();
+
+  if (!isValidEmail(email)) return { ok: false, error: "Enter a valid email address." };
+  if (!/^\d{6}$/.test(code)) return { ok: false, error: "Enter the 6-digit code from your email." };
+
+  // Dev bypass: the fixed master code verifies any email when enabled.
+  const masterCode = getDevMasterCode();
+  if (masterCode && code === masterCode) {
+    console.info(`[otp] DEV MASTER CODE used for ${email} (password_reset) — bypass accepted.`);
+    return { ok: true };
+  }
+
+  const db = requireDb();
+  const { otpCodes } = publicSchema;
+
+  const rows = await db
+    .select()
+    .from(otpCodes)
+    .where(and(eq(otpCodes.email, email), eq(otpCodes.purpose, "password_reset")))
+    .orderBy(desc(otpCodes.createdAt))
+    .limit(1);
+
+  const row = rows[0];
+  if (!row || row.consumed) {
+    return { ok: false, error: "No active code — request a new one." };
+  }
+  if (row.expiresAt.getTime() <= Date.now()) {
+    await db.delete(otpCodes).where(eq(otpCodes.id, row.id));
+    return { ok: false, error: "This code has expired — request a new one." };
+  }
+  if (row.attempts >= OTP_MAX_ATTEMPTS) {
+    await db.delete(otpCodes).where(eq(otpCodes.id, row.id));
+    return { ok: false, error: "Too many attempts — request a new code." };
+  }
+
+  const matched = await bcrypt.compare(code, row.codeHash);
+  if (!matched) {
+    const attempts = row.attempts + 1;
+    await db.update(otpCodes).set({ attempts }).where(eq(otpCodes.id, row.id));
+    const left = OTP_MAX_ATTEMPTS - attempts;
+    return {
+      ok: false,
+      error:
+        left > 0
+          ? `Incorrect code — ${left} attempt${left === 1 ? "" : "s"} left.`
+          : "Too many attempts — request a new code.",
+    };
+  }
+
+  // Single use: verified → delete, so the same code can never be reused.
+  await db.delete(otpCodes).where(eq(otpCodes.id, row.id));
+  return { ok: true };
+}
+
 // ── Email delivery ───────────────────────────────────────────────────────────
 
 function template(email: string, code: string, purpose: OtpPurpose): { subject: string; text: string; html: string } {
-  const action = purpose === "signup" ? "create your account" : "sign in";
+  // Password-reset codes carry the dedicated "Reset Your Password" subject
+  // (mirrored in src/lib/auth/resend.ts for the Resend path).
+  const isReset = purpose === "password_reset";
+  const action = isReset ? "reset your password" : purpose === "signup" ? "create your account" : "sign in";
   const minutes = OTP_TTL_MINUTES;
   return {
-    subject: `Your X verification code: ${code}`,
-    text: `Your verification code is ${code}. It expires in ${minutes} minutes. Enter this code to ${action}. If you didn't request this, you can ignore this email.`,
+    subject: isReset ? "Reset Your Password" : `Your X verification code: ${code}`,
+    text: `Your ${isReset ? "password reset code" : "verification code"} is ${code}. It expires in ${minutes} minutes. Enter this code to ${action}. If you didn't request this, you can ignore this email.`,
     html: `<!doctype html>
 <html><body style="margin:0;padding:0;background:#0b0d10;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
   <div style="max-width:480px;margin:0 auto;padding:32px 24px;">
     <div style="background:#111318;border:1px solid #27272a;border-radius:16px;padding:32px;">
       <p style="margin:0 0 8px;color:#a1a1aa;font-size:13px;">X — Automated AI Accounting</p>
-      <h1 style="margin:0 0 16px;color:#fafafa;font-size:20px;">Verify your email</h1>
+      <h1 style="margin:0 0 16px;color:#fafafa;font-size:20px;">${isReset ? "Reset your password" : "Verify your email"}</h1>
       <p style="margin:0 0 20px;color:#d4d4d8;font-size:14px;line-height:1.6;">
         Use this 6-digit code to ${action}:
       </p>
@@ -296,7 +407,7 @@ function template(email: string, code: string, purpose: OtpPurpose): { subject: 
         <span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#34d399;">${code}</span>
       </div>
       <p style="margin:0 0 8px;color:#71717a;font-size:12px;line-height:1.6;">
-        This code expires in ${minutes} minutes and can be used once. If you didn't request it, you can safely ignore this email.
+        This code expires in ${minutes} minutes and can be used once. If you didn't request it, you can safely ignore this email${isReset ? " — your password will remain unchanged" : ""}.
       </p>
     </div>
   </div>

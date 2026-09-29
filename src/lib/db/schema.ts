@@ -91,7 +91,7 @@ export const accounts = pgTable(
   (t) => [unique("accounts_provider_account_key").on(t.provider, t.providerAccountId)],
 );
 
-/** 6-digit email one-time passcodes (signup/login verification). */
+/** 6-digit email one-time passcodes (signup/login/password-reset verification). */
 export const otpCodes = pgTable(
   "otp_codes",
   {

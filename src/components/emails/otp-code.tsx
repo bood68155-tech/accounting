@@ -19,7 +19,7 @@ import {
 
 export interface OtpEmailProps {
   code: string;
-  purpose: "signup" | "login";
+  purpose: "signup" | "login" | "password_reset";
   minutes: number;
   appName?: string;
 }
@@ -30,11 +30,12 @@ export function OtpEmail({
   minutes,
   appName = "X — Automated AI Accounting",
 }: OtpEmailProps) {
-  const action = purpose === "signup" ? "create your account" : "sign in";
+  const isReset = purpose === "password_reset";
+  const action = isReset ? "reset your password" : purpose === "signup" ? "create your account" : "sign in";
   return (
     <Html>
       <Head />
-      <Preview>Your verification code: {code}</Preview>
+      <Preview>{isReset ? "Reset your password" : "Your verification code"}: {code}</Preview>
       <Body
         style={{
           margin: 0,
@@ -57,7 +58,7 @@ export function OtpEmail({
               as="h1"
               style={{ margin: "0 0 16px", color: "#fafafa", fontSize: 20, fontWeight: 600 }}
             >
-              Verify your email
+              {isReset ? "Reset your password" : "Verify your email"}
             </Heading>
             <Text style={{ margin: "0 0 20px", color: "#d4d4d8", fontSize: 14, lineHeight: 1.6 }}>
               Use this 6-digit code to {action}:
@@ -85,8 +86,9 @@ export function OtpEmail({
               </Text>
             </Section>
             <Text style={{ margin: 0, color: "#71717a", fontSize: 12, lineHeight: 1.6 }}>
-              This code expires in {minutes} minutes and can be used once. If you didn't request
-              it, you can safely ignore this email.
+              This code expires in {minutes} minutes and can be used once. If you didn&apos;t
+              request it, you can safely ignore this email
+              {isReset ? " — your password will remain unchanged." : "."}
             </Text>
           </Section>
           <Hr style={{ border: "none", borderTop: "1px solid #27272a", margin: "24px 0 0" }} />
