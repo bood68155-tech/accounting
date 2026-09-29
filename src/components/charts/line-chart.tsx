@@ -65,8 +65,9 @@ export function LineChart({ labels, series, height = 260, currency = "USD" }: Li
       >
         {gridLines.map((line, i) => (
           <g key={i}>
-            <line x1={padX} x2={width - padX} y1={line.y} y2={line.y} stroke="#27272a" strokeWidth="1" strokeDasharray="3 4" />
-            <text x={width - padX} y={line.y - 4} textAnchor="end" fontSize="9" fill="#52525b" className="tabular-nums">
+            {/* Solid 1px hairline grid — editorial, no dashes */}
+            <line x1={padX} x2={width - padX} y1={line.y} y2={line.y} stroke="#ffffff" strokeOpacity="0.14" strokeWidth="1" />
+            <text x={width - padX} y={line.y - 4} textAnchor="end" fontSize="9" fill="#71717a" className="font-mono tabular-nums">
               {formatCompactCurrency(line.value, currency)}
             </text>
           </g>
@@ -79,8 +80,9 @@ export function LineChart({ labels, series, height = 260, currency = "USD" }: Li
             y={height - 8}
             textAnchor="middle"
             fontSize="9"
-            fill={hoverIndex === i ? "#d4d4d8" : "#52525b"}
-            fontWeight={hoverIndex === i ? 600 : 400}
+            fill={hoverIndex === i ? "#ffffff" : "#71717a"}
+            fontWeight={hoverIndex === i ? 700 : 400}
+            className="font-mono uppercase"
           >
             {label}
           </text>
@@ -94,20 +96,22 @@ export function LineChart({ labels, series, height = 260, currency = "USD" }: Li
                 .join(" ")}
               fill="none"
               stroke={s.color}
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={hoverIndex === null ? 1 : 0.35}
+              strokeWidth="2"
+              strokeLinecap="butt"
+              strokeLinejoin="miter"
+              opacity={hoverIndex === null ? 1 : 0.25}
             />
             {s.data.map((value, i) => (
               <circle
                 key={i}
                 cx={x(i)}
                 cy={y(value)}
-                r="3.5"
+                r="4"
                 fill={s.color}
+                stroke="#000000"
+                strokeWidth="2"
                 opacity={hoverIndex === i ? 1 : 0}
-                style={{ transition: "opacity 0.15s" }}
+                style={{ transition: "opacity 0.1s" }}
               />
             ))}
           </g>
@@ -119,7 +123,7 @@ export function LineChart({ labels, series, height = 260, currency = "USD" }: Li
             x2={x(hoverIndex)}
             y1={padTop}
             y2={height - padBottom}
-            stroke="#3f3f46"
+            stroke="#ff3b00"
             strokeWidth="1"
           />
         )}
@@ -127,15 +131,15 @@ export function LineChart({ labels, series, height = 260, currency = "USD" }: Li
 
       {hoverIndex !== null && (
         <div
-          className="pointer-events-none absolute top-2 z-10 rounded-lg border border-zinc-700 bg-zinc-900/95 px-3 py-2 text-xs shadow-xl"
+          className="pointer-events-none absolute top-2 z-10 border border-white bg-black px-3 py-2 text-xs shadow-[4px_4px_0_0_#ff3b00]"
           style={{ left: `${(x(hoverIndex) / width) * 100}%`, transform: "translateX(-50%)" }}
         >
-          <div className="mb-1 font-semibold text-zinc-300">{labels[hoverIndex]}</div>
+          <div className="type-kicker mb-1.5 text-zinc-400">{labels[hoverIndex]}</div>
           {series.map((s) => (
             <div key={s.name} className="flex items-center gap-2 py-0.5">
-              <span className="h-2 w-2 rounded-full" style={{ background: s.color }} />
-              <span className="text-zinc-400">{s.name}</span>
-              <span className="ml-auto pl-3 font-medium text-zinc-100 tabular-nums">
+              <span className="h-2 w-2 shrink-0" style={{ background: s.color }} />
+              <span className="type-kicker text-zinc-400">{s.name}</span>
+              <span className="ml-auto pl-3 font-bold text-white tabular-nums">
                 {formatCompactCurrency(s.data[hoverIndex] ?? 0, currency)}
               </span>
             </div>

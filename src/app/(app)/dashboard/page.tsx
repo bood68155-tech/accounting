@@ -40,12 +40,12 @@ function AiInsightsPanel({
       <CardHeader className="flex-row items-center justify-between">
         <div>
           <CardTitle className="flex items-center gap-2">
-            <IconSparkles className="h-4.5 w-4.5 text-emerald-400" />
+            <IconSparkles className="h-4.5 w-4.5 text-accent" />
             AI financial insights
           </CardTitle>
           <CardDescription>
             Generated from your live ledger — ask the{" "}
-            <Link href="/assistant" className="text-emerald-400 hover:text-emerald-300">
+            <Link href="/assistant" className="text-accent transition-colors hover:text-white">
               AI Assistant
             </Link>{" "}
             for details
@@ -56,11 +56,11 @@ function AiInsightsPanel({
         {insights.slice(0, 6).map((insight) => (
           <div
             key={insight.title}
-            className={`rounded-xl border p-3.5 ${
+            className={`border p-3.5 ${
               insight.tone === "positive"
-                ? "border-emerald-500/25 bg-emerald-500/[0.05]"
+                ? "border-white/60 bg-white/[0.04]"
                 : insight.tone === "warning"
-                  ? "border-amber-500/25 bg-amber-500/[0.05]"
+                  ? "border-accent bg-accent/[0.06]"
                   : "border-zinc-800 bg-zinc-900/40"
             }`}
           >
@@ -88,8 +88,8 @@ export default async function DashboardPage() {
         <div className="mx-auto w-full max-w-7xl flex-1 space-y-6 px-6 py-6">
           <Card>
             <CardContent className="flex flex-col items-center py-16 text-center">
-              <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-emerald-500/10 ring-1 ring-emerald-500/30">
-                <IconSparkles className="h-6 w-6 text-emerald-400" />
+              <div className="frame-icon h-14 w-14">
+                <IconSparkles className="h-6 w-6 text-accent" />
               </div>
               <h2 className="mt-5 text-lg font-semibold text-zinc-50">Welcome to your workspace</h2>
               <p className="mt-1.5 max-w-md text-sm leading-relaxed text-zinc-500">
@@ -99,7 +99,7 @@ export default async function DashboardPage() {
               </p>
               <Link
                 href="/stores/new"
-                className="mt-6 inline-flex h-10 items-center gap-1.5 rounded-xl bg-emerald-500 px-4 text-sm font-semibold text-emerald-950 transition-colors hover:bg-emerald-400"
+                className="mt-6 inline-flex h-10 items-center gap-1.5 bg-accent px-4 text-sm font-semibold uppercase tracking-[0.08em] text-white transition-colors duration-100 hover:bg-white hover:text-black"
               >
                 Connect a store
               </Link>
@@ -150,7 +150,7 @@ export default async function DashboardPage() {
             delta={12.4}
             sublabel="vs previous"
             spark={revenueSpark}
-            accent="#34d399"
+            accent="#ff3b00"
             icon={<IconCoin className="h-5 w-5" />}
           />
           <StatCard
@@ -159,7 +159,7 @@ export default async function DashboardPage() {
             delta={8.1}
             sublabel="after all costs"
             spark={profitSpark}
-            accent="#2dd4bf"
+            accent="#ffffff"
             icon={<IconArrowUp className="h-5 w-5" />}
           />
           <StatCard
@@ -168,7 +168,7 @@ export default async function DashboardPage() {
             delta={stats.period_orders > 0 ? 5.2 : 0}
             sublabel="vs previous"
             spark={orders.slice(-30).map((_, i) => i + 1)}
-            accent="#38bdf8"
+            accent="#71717a"
             icon={<IconOrders className="h-5 w-5" />}
           />
           <StatCard
@@ -177,7 +177,7 @@ export default async function DashboardPage() {
             delta={1.4}
             sublabel={`AOV ${formatCurrency(stats.aov, currency)}`}
             spark={monthly.map((m) => (m.revenue > 0 ? (m.net_profit / m.revenue) * 100 : 0))}
-            accent="#a78bfa"
+            accent="#ffffff"
             icon={<IconSparkles className="h-5 w-5" />}
           />
         </div>
@@ -192,10 +192,10 @@ export default async function DashboardPage() {
               </div>
               <div className="flex items-center gap-4 text-xs text-zinc-400">
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" /> Revenue
+                  <span className="h-2 w-2 bg-white" /> Revenue
                 </span>
                 <span className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-full bg-teal-300" /> Net profit
+                  <span className="h-2 w-2 bg-accent" /> Net profit
                 </span>
               </div>
             </CardHeader>
@@ -204,8 +204,9 @@ export default async function DashboardPage() {
                 labels={monthly.map((m) => m.label)}
                 currency={currency}
                 series={[
-                  { name: "Revenue", color: "#34d399", data: monthly.map((m) => m.revenue) },
-                  { name: "Net profit", color: "#5eead4", data: monthly.map((m) => m.net_profit) },
+                  // Editorial palette: stark white / signal red
+                  { name: "Revenue", color: "#ffffff", data: monthly.map((m) => m.revenue) },
+                  { name: "Net profit", color: "#ff3b00", data: monthly.map((m) => m.net_profit) },
                 ]}
               />
             </CardContent>
@@ -240,9 +241,10 @@ export default async function DashboardPage() {
                 labels={monthly.map((m) => m.label)}
                 currency={currency}
                 series={[
-                  { name: "Net profit", color: "#34d399", values: monthly.map((m) => m.net_profit) },
-                  { name: "COGS", color: "#38bdf8", values: monthly.map((m) => m.cogs) },
-                  { name: "Fees", color: "#fbbf24", values: monthly.map((m) => m.fees) },
+                  // Editorial palette: signal red / stark white / zinc grey
+                  { name: "Net profit", color: "#ff3b00", values: monthly.map((m) => m.net_profit) },
+                  { name: "COGS", color: "#ffffff", values: monthly.map((m) => m.cogs) },
+                  { name: "Fees", color: "#71717a", values: monthly.map((m) => m.fees) },
                 ]}
               />
             </CardContent>
@@ -262,8 +264,8 @@ export default async function DashboardPage() {
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
                       <span
-                        className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                          event.status === "processed" ? "bg-emerald-400" : "bg-red-400"
+                        className={`h-1.5 w-1.5 shrink-0 ${
+                          event.status === "processed" ? "bg-white" : "bg-accent"
                         }`}
                       />
                       <div className="min-w-0">
@@ -291,7 +293,7 @@ export default async function DashboardPage() {
         {/* Deep store research: analytics + continuous audit */}
         <section aria-label="Deep store research">
           <div className="mb-3 flex items-center gap-2">
-            <IconActivity className="h-4.5 w-4.5 text-emerald-400" />
+            <IconActivity className="h-4.5 w-4.5 text-accent" />
             <h2 className="text-sm font-semibold text-zinc-100">Deep store research</h2>
             <p className="hidden text-xs text-zinc-500 sm:block">
               Real-time business analytics · automated auditing · inventory warnings
@@ -303,7 +305,7 @@ export default async function DashboardPage() {
         {/* Profit calculator */}
         <div>
           <div className="mb-3 flex items-center gap-2">
-            <IconSparkles className="h-4.5 w-4.5 text-emerald-400" />
+            <IconSparkles className="h-4.5 w-4.5 text-accent" />
             <h2 className="text-sm font-semibold text-zinc-100">True net profit engine — try it</h2>
             <p className="hidden text-xs text-zinc-500 sm:block">
               Same math the webhooks run: item cost + shipping + gateway fees
@@ -319,7 +321,7 @@ export default async function DashboardPage() {
               <CardTitle>Recent orders</CardTitle>
               <CardDescription>Every order normalized with item cost & gateway fee</CardDescription>
             </div>
-            <Link href="/orders" className="text-xs font-medium text-emerald-400 transition-colors hover:text-emerald-300">
+            <Link href="/orders" className="text-xs font-bold uppercase tracking-[0.08em] text-accent transition-colors hover:text-white">
               View all →
             </Link>
           </CardHeader>
@@ -349,7 +351,7 @@ export default async function DashboardPage() {
                       <TCell className="text-right text-zinc-100 tabular-nums">{formatCurrency(order.total_amount, order.currency)}</TCell>
                       <TCell className="text-right text-zinc-400 tabular-nums">{formatCurrency(profit.cogs, order.currency)}</TCell>
                       <TCell className="text-right text-zinc-400 tabular-nums">{formatCurrency(profit.payment_fees, order.currency)}</TCell>
-                      <TCell className={`text-right font-medium tabular-nums ${netIsProfit ? "text-emerald-400" : "text-red-400"}`}>
+                      <TCell className={`text-right font-bold tabular-nums ${netIsProfit ? "text-white" : "text-accent"}`}>
                         {netIsProfit ? "+" : "−"}{formatCurrency(Math.abs(profit.net_profit), order.currency)}
                       </TCell>
                       <TCell>

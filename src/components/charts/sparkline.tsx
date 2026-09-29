@@ -8,7 +8,7 @@ interface SparklineProps {
 export function Sparkline({
   data,
   className = "h-10 w-full",
-  stroke = "#34d399",
+  stroke = "#ff3b00",
   fill = true,
 }: SparklineProps) {
   if (data.length < 2) return <div className={className} />;
