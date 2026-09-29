@@ -72,7 +72,7 @@ const STEPS = [
 
 export default function LandingPage() {
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#0b0d10]">
+    <div className="relative min-h-screen overflow-hidden bg-app">
       {/* Backdrop */}
       <div className="pointer-events-none absolute inset-0">
         <div className="bg-grid bg-grid-fade absolute inset-0" />

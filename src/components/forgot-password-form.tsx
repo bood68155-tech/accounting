@@ -180,58 +180,63 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0b0d10] px-4">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-app px-4 py-10 sm:px-6">
+      {/* Backdrop: hairline grid + one soft emerald glow for depth */}
       <div className="pointer-events-none absolute inset-0">
         <div className="bg-grid bg-grid-fade absolute inset-0" />
-        <div className="glow-emerald absolute -top-24 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full blur-3xl" />
+        <div className="glow-emerald absolute -top-32 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full blur-3xl" />
       </div>
 
-      <div className="relative z-10 w-full max-w-sm">
+      <div className="animate-fade-up relative z-10 w-full max-w-[400px]">
         <div className="mb-8 flex justify-center">
-          <Link href="/">
-            <Logo size={34} />
+          <Link href="/" className="transition-opacity duration-200 hover:opacity-80">
+            <Logo size={36} />
           </Link>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">
+        <Card className="glass-panel border-white/[0.07]">
+          <CardHeader className="p-6 pb-0 sm:p-7 sm:pb-0">
+            <CardTitle className="text-xl font-semibold tracking-tight text-zinc-50">
               {step === "verify" ? "Set a new password" : "Forgot your password?"}
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="mt-1 text-[13px] leading-relaxed text-zinc-400">
               {step === "verify"
                 ? `Enter the 6-digit code we sent to ${email}`
                 : "We'll email you a 6-digit code to reset it"}
             </CardDescription>
           </CardHeader>
-          <CardContent className="pt-5">
+          <CardContent className="p-6 pt-6 sm:p-7 sm:pt-6">
             {step === "email" ? (
-              <form onSubmit={handleEmailSubmit} className="space-y-4">
+              <form onSubmit={handleEmailSubmit} className="space-y-5">
                 <div className="space-y-1.5">
                   <Label htmlFor="email">Email</Label>
                   <Input
                     id="email"
                     type="email"
                     required
-                    placeholder="you@gmail.com"
+                    autoComplete="email"
+                    placeholder="you@company.com"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                   />
                 </div>
 
                 {error && (
-                  <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                  <p
+                    role="alert"
+                    className="animate-scale-in rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5 text-xs leading-relaxed text-red-400"
+                  >
                     {error}
                   </p>
                 )}
 
-                <Button type="submit" className="w-full" disabled={loading}>
+                <Button type="submit" className="h-11 w-full" disabled={loading}>
                   {loading ? "Sending code…" : "Send reset code"}
                 </Button>
 
-                <p className="text-center text-xs text-zinc-500">
+                <p className="border-t border-zinc-800/70 pt-4 text-center text-xs text-zinc-500">
                   Remembered it?{" "}
-                  <Link href="/login" className="font-medium text-emerald-400 hover:text-emerald-300">
+                  <Link href="/login" className="font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300">
                     Back to sign in
                   </Link>
                 </p>
@@ -253,8 +258,11 @@ export function ForgotPasswordForm() {
                       autoComplete={i === 0 ? "one-time-code" : "off"}
                       maxLength={6}
                       className={cn(
-                        "h-12 w-11 text-center text-lg font-semibold tabular-nums",
-                        digit && "border-emerald-500/60",
+                        "h-12 w-10 rounded-xl px-0 text-center text-lg font-semibold tabular-nums transition-all duration-200 sm:w-11",
+                        digit
+                          ? "border-emerald-500/60 bg-emerald-500/[0.04] text-emerald-100"
+                          : "hover:border-zinc-700",
+                        "focus:border-emerald-500/70 focus:ring-[3px] focus:ring-emerald-500/15",
                       )}
                       aria-label={`Digit ${i + 1}`}
                     />
@@ -268,6 +276,7 @@ export function ForgotPasswordForm() {
                     type="password"
                     required
                     minLength={6}
+                    autoComplete="new-password"
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -280,6 +289,7 @@ export function ForgotPasswordForm() {
                     type="password"
                     required
                     minLength={6}
+                    autoComplete="new-password"
                     placeholder="••••••••"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
@@ -287,29 +297,32 @@ export function ForgotPasswordForm() {
                 </div>
 
                 {devCode && (
-                  <p className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-center font-mono text-sm text-sky-300">
-                    Dev code: {devCode}
+                  <p className="rounded-xl border border-sky-500/25 bg-sky-500/[0.08] px-3 py-2.5 text-center font-mono text-sm tracking-[0.2em] text-sky-300">
+                    {devCode}
                   </p>
                 )}
                 {deliveryNote && !devCode && (
-                  <p className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-center text-xs text-emerald-300">
+                  <p className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2.5 text-center text-xs leading-relaxed text-emerald-300">
                     {deliveryNote}
                   </p>
                 )}
                 {error && (
-                  <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-400">
+                  <p
+                    role="alert"
+                    className="animate-scale-in rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5 text-xs leading-relaxed text-red-400"
+                  >
                     {error}
                   </p>
                 )}
 
-                <Button id="reset-password-submit" type="submit" className="w-full" disabled={verifying}>
+                <Button id="reset-password-submit" type="submit" className="h-11 w-full" disabled={verifying}>
                   {verifying ? "Resetting…" : "Reset password"}
                 </Button>
 
                 <div className="flex items-center justify-between text-xs">
                   <button
                     type="button"
-                    className="text-zinc-500 transition-colors hover:text-zinc-300 disabled:opacity-50"
+                    className="rounded-md text-zinc-500 transition-colors duration-200 hover:text-zinc-300 disabled:opacity-50"
                     onClick={() => {
                       setStep("email");
                       setError(null);
@@ -322,7 +335,7 @@ export function ForgotPasswordForm() {
                   </button>
                   <button
                     type="button"
-                    className="font-medium text-emerald-400 transition-colors hover:text-emerald-300 disabled:opacity-50"
+                    className="rounded-md font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300 disabled:opacity-50"
                     onClick={() => void requestResetCode()}
                     disabled={cooldown > 0 || verifying}
                   >
@@ -334,7 +347,7 @@ export function ForgotPasswordForm() {
           </CardContent>
         </Card>
 
-        <p className="mt-6 text-center text-[11px] text-zinc-600">
+        <p className="mt-6 text-center text-[11px] leading-relaxed text-zinc-600">
           Reset codes expire in 10 minutes and can be used once
         </p>
       </div>

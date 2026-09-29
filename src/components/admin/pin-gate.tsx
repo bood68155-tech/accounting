@@ -31,7 +31,7 @@ export function PinGate() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#0b0d10] px-6">
+    <main className="flex min-h-screen items-center justify-center bg-app px-6">
       <Card className="w-full max-w-sm animate-fade-up">
         <CardHeader className="items-center pb-2 text-center">
           <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-emerald-500/25 bg-emerald-500/10 text-emerald-400">

@@ -274,23 +274,26 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const isLogin = mode === "login";
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#0b0d10] px-4">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-app px-4 py-10 sm:px-6">
+      {/* Backdrop: hairline grid + one soft emerald glow for depth */}
       <div className="pointer-events-none absolute inset-0">
         <div className="bg-grid bg-grid-fade absolute inset-0" />
-        <div className="glow-emerald absolute -top-24 left-1/2 h-80 w-80 -translate-x-1/2 rounded-full blur-3xl" />
+        <div className="glow-emerald absolute -top-32 left-1/2 h-96 w-96 -translate-x-1/2 rounded-full blur-3xl" />
       </div>
 
-      <div className="relative z-10 w-full max-w-sm">
+      <div className="animate-fade-up relative z-10 w-full max-w-[400px]">
         <div className="mb-8 flex justify-center">
-          <Link href="/"><Logo size={34} /></Link>
+          <Link href="/" className="transition-opacity duration-200 hover:opacity-80">
+            <Logo size={36} />
+          </Link>
         </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-lg">
+        <Card className="glass-panel border-white/[0.07]">
+          <CardHeader className="p-6 pb-0 sm:p-7 sm:pb-0">
+            <CardTitle className="text-xl font-semibold tracking-tight text-zinc-50">
               {step === "verify" ? "Verify your email" : isLogin ? "Welcome back" : "Create your account"}
             </CardTitle>
-            <CardDescription>
+            <CardDescription className="mt-1 text-[13px] leading-relaxed text-zinc-400">
               {step === "verify"
                 ? `Enter the 6-digit code we sent to ${email}`
                 : isLogin
@@ -298,31 +301,38 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   : "Start automating your bookkeeping"}
             </CardDescription>
           </CardHeader>
-          <CardContent className="pt-5">
+          <CardContent className="p-6 pt-6 sm:p-7 sm:pt-6">
             {step === "credentials" ? (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {googleEnabled && (
                   <>
-                    <Button type="button" variant="outline" className="w-full" onClick={handleGoogleSignIn} disabled={googleLoading}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 w-full bg-transparent"
+                      onClick={handleGoogleSignIn}
+                      disabled={googleLoading}
+                    >
                       <GoogleIcon className="h-4 w-4" />
                       {googleLoading ? "Redirecting to Google…" : "Continue with Google"}
                     </Button>
-                    <div className="flex items-center gap-3 py-1" aria-hidden="true">
+                    <div className="flex items-center gap-3 py-0.5" aria-hidden="true">
                       <div className="h-px flex-1 bg-zinc-800" />
-                      <span className="text-[11px] uppercase tracking-wider text-zinc-600">or</span>
+                      <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-zinc-600">or</span>
                       <div className="h-px flex-1 bg-zinc-800" />
                     </div>
                   </>
                 )}
 
-                <form onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit} className="space-y-4">
+                <form onSubmit={isLogin ? handleLoginSubmit : handleSignupSubmit} className="space-y-4" noValidate>
                   <div className="space-y-1.5">
                     <Label htmlFor="email">Email</Label>
                     <Input
                       id="email"
                       type="email"
                       required
-                      placeholder="you@gmail.com"
+                      autoComplete="email"
+                      placeholder="you@company.com"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                     />
@@ -333,7 +343,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                       {isLogin && (
                         <Link
                           href="/forgot-password"
-                          className="text-[11px] font-medium text-emerald-400 transition-colors hover:text-emerald-300"
+                          className="text-[11px] font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300"
                         >
                           Forgot password?
                         </Link>
@@ -344,6 +354,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                       type="password"
                       required
                       minLength={6}
+                      autoComplete={isLogin ? "current-password" : "new-password"}
                       placeholder="••••••••"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -351,17 +362,22 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   </div>
 
                   {error && (
-                    <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>
+                    <p
+                      role="alert"
+                      className="animate-scale-in rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5 text-xs leading-relaxed text-red-400"
+                    >
+                      {error}
+                    </p>
                   )}
 
-                  <Button type="submit" className="w-full" disabled={loading || codeSending}>
+                  <Button type="submit" className="h-11 w-full" disabled={loading || codeSending}>
                     {loading
                       ? isLogin ? "Signing in…" : "Sending code…"
                       : isLogin ? "Sign in" : "Send verification code"}
                   </Button>
                 </form>
 
-                <p className="text-center text-[11px] leading-relaxed text-zinc-600">
+                <p className="text-center text-[11px] leading-relaxed text-zinc-500">
                   {isLogin
                     ? "Sign in with your email and password — no code needed."
                     : "We'll email a 6-digit code once to verify it's you. After that, sign in with just your password."}
@@ -384,8 +400,11 @@ export function AuthForm({ mode }: { mode: Mode }) {
                       autoComplete={i === 0 ? "one-time-code" : "off"}
                       maxLength={6}
                       className={cn(
-                        "h-12 w-11 text-center text-lg font-semibold tabular-nums",
-                        digit && "border-emerald-500/60",
+                        "h-12 w-10 rounded-xl px-0 text-center text-lg font-semibold tabular-nums transition-all duration-200 sm:w-11",
+                        digit
+                          ? "border-emerald-500/60 bg-emerald-500/[0.04] text-emerald-100"
+                          : "hover:border-zinc-700",
+                        "focus:border-emerald-500/70 focus:ring-[3px] focus:ring-emerald-500/15",
                       )}
                       aria-label={`Digit ${i + 1}`}
                     />
@@ -393,27 +412,37 @@ export function AuthForm({ mode }: { mode: Mode }) {
                 </div>
 
                 {devCode && (
-                  <p className="rounded-lg border border-sky-500/25 bg-sky-500/10 px-3 py-2 text-center font-mono text-sm text-sky-300">
-                    Dev code: {devCode}
+                  <p className="rounded-xl border border-sky-500/25 bg-sky-500/[0.08] px-3 py-2.5 text-center font-mono text-sm tracking-[0.2em] text-sky-300">
+                    {devCode}
                   </p>
                 )}
                 {deliveryNote && !devCode && (
-                  <p className="rounded-lg border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-center text-xs text-emerald-300">
+                  <p className="rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] px-3 py-2.5 text-center text-xs leading-relaxed text-emerald-300">
                     {deliveryNote}
                   </p>
                 )}
                 {error && (
-                  <p className="rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-2 text-xs text-red-400">{error}</p>
+                  <p
+                    role="alert"
+                    className="animate-scale-in rounded-xl border border-red-500/25 bg-red-500/[0.08] px-3 py-2.5 text-xs leading-relaxed text-red-400"
+                  >
+                    {error}
+                  </p>
                 )}
 
-                <Button type="button" className="w-full" onClick={() => void verifyAndCreateAccount()} disabled={verifying}>
+                <Button
+                  type="button"
+                  className="h-11 w-full"
+                  onClick={() => void verifyAndCreateAccount()}
+                  disabled={verifying}
+                >
                   {verifying ? "Creating account…" : "Verify & create account"}
                 </Button>
 
                 <div className="flex items-center justify-between text-xs">
                   <button
                     type="button"
-                    className="text-zinc-500 transition-colors hover:text-zinc-300 disabled:opacity-50"
+                    className="rounded-md text-zinc-500 transition-colors duration-200 hover:text-zinc-300 disabled:opacity-50"
                     onClick={() => {
                       setStep("credentials");
                       setError(null);
@@ -424,7 +453,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
                   </button>
                   <button
                     type="button"
-                    className="font-medium text-emerald-400 transition-colors hover:text-emerald-300 disabled:opacity-50"
+                    className="rounded-md font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300 disabled:opacity-50"
                     onClick={() => void requestOtp()}
                     disabled={cooldown > 0 || codeSending || verifying}
                   >
@@ -435,18 +464,18 @@ export function AuthForm({ mode }: { mode: Mode }) {
             )}
 
             {step === "credentials" && (
-              <p className="mt-5 text-center text-xs text-zinc-500">
+              <p className="mt-6 border-t border-zinc-800/70 pt-4 text-center text-xs text-zinc-500">
                 {isLogin ? (
-                  <>No account yet?{" "}<Link href="/signup" className="font-medium text-emerald-400 hover:text-emerald-300">Sign up</Link></>
+                  <>No account yet?{" "}<Link href="/signup" className="font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300">Sign up</Link></>
                 ) : (
-                  <>Already have an account?{" "}<Link href="/login" className="font-medium text-emerald-400 hover:text-emerald-300">Sign in</Link></>
+                  <>Already have an account?{" "}<Link href="/login" className="font-medium text-emerald-400 transition-colors duration-200 hover:text-emerald-300">Sign in</Link></>
                 )}
               </p>
             )}
           </CardContent>
         </Card>
 
-        <p className="mt-6 text-center text-[11px] text-zinc-600">
+        <p className="mt-6 text-center text-[11px] leading-relaxed text-zinc-600">
           Secured by verified email, encrypted credentials and tenant-isolated data
         </p>
       </div>

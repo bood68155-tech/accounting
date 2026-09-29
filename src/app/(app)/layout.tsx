@@ -11,7 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // crashing when credentials are missing.
   if (!isDatabaseConfigured()) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0b0d10] px-6">
+      <div className="flex min-h-screen items-center justify-center bg-app px-6">
         <div className="max-w-md rounded-2xl border border-amber-500/25 bg-amber-500/[0.06] p-6 text-center">
           <h1 className="text-base font-semibold text-zinc-50">Database is not configured</h1>
           <p className="mt-2 text-sm leading-relaxed text-zinc-400">
@@ -48,7 +48,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <SessionProvider session={session}>
-      <div className="flex min-h-screen bg-[#0b0d10]">
+      <div className="flex min-h-screen flex-col bg-app md:flex-row">
         <Sidebar tenantName={tenantName} />
         <div className="flex min-w-0 flex-1 flex-col">{children}</div>
       </div>

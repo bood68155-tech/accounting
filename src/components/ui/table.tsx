@@ -23,7 +23,7 @@ export function TRow({ className, ...props }: React.HTMLAttributes<HTMLTableRowE
   return (
     <tr
       className={cn(
-        "border-b border-zinc-800/70 last:border-0 transition-colors hover:bg-zinc-800/30",
+        "border-b border-zinc-800/70 last:border-0 transition-colors hover:bg-zinc-800/25",
         className,
       )}
       {...props}
