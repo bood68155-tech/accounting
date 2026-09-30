@@ -6,6 +6,7 @@ import bcrypt from "bcryptjs";
 import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { requireDb, publicSchema, isDatabaseConfigured } from "@/lib/db";
+import { isAdminEmail } from "@/lib/admin/auth";
 
 /**
  * ── Auth (NextAuth v5 / Auth.js: credentials + Google OAuth + email OTP) ──────
@@ -28,6 +29,7 @@ export interface SessionUser {
   tenantId?: string | null;
   tenantName?: string | null;
   tenantSchema?: string | null;
+  isAdmin?: boolean;
 }
 
 /** Resolve (id, name, schema) of the user's tenant, if provisioned. */
@@ -210,6 +212,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
           }
         }
       }
+
+      // Admin flag rides in the token (email check — see lib/admin/auth).
+      token.isAdmin = isAdminEmail(typeof token.email === "string" ? token.email : null);
       return token;
     },
 
@@ -218,6 +223,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       session.user.tenantId = (token.tenantId as string | null | undefined) ?? null;
       session.user.tenantName = (token.tenantName as string | null | undefined) ?? null;
       session.user.tenantSchema = (token.tenantSchema as string | null | undefined) ?? null;
+      session.user.isAdmin = token.isAdmin === true;
       return session;
     },
   },

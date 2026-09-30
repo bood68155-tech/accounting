@@ -11,6 +11,8 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
+  numeric,
   pgEnum,
   pgTable,
   primaryKey,
@@ -58,6 +60,18 @@ export const entrySourceEnum = pgEnum("entry_source", [
 ]);
 export const entryStatusEnum = pgEnum("entry_status", ["draft", "posted"]);
 export const eventStatusEnum = pgEnum("event_status", ["processed", "failed"]);
+export const subscriptionStatusEnum = pgEnum("subscription_status", [
+  "trial",
+  "active",
+  "past_due",
+  "cancelled",
+]);
+export const discountTypeEnum = pgEnum("discount_type", ["percent", "fixed"]);
+export const couponDurationEnum = pgEnum("coupon_duration", [
+  "once",
+  "repeating",
+  "forever",
+]);
 
 // ── Auth users (bcrypt hashes; auth handled by NextAuth v5) ──────────────────
 export const users = pgTable("users", {
@@ -156,6 +170,108 @@ export const storeRegistry = pgTable("store_registry", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Billing: plans, subscriptions, coupons, audit log (admin console) ────────
+
+/** Plan tier with first-month / recurring monthly pricing. */
+export const subscriptionPlans = pgTable("subscription_plans", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  code: text("code").notNull().unique(),
+  name: text("name").notNull(),
+  /** First-month price — 0 for the "first month free" pattern. */
+  firstMonthPrice: numeric("first_month_price", { precision: 12, scale: 2, mode: "number" })
+    .notNull()
+    .default(0),
+  monthlyPrice: numeric("monthly_price", { precision: 12, scale: 2, mode: "number" })
+    .notNull()
+    .default(30),
+  currency: text("currency").notNull().default("USD"),
+  trialDays: integer("trial_days").notNull().default(14),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Per-user subscription with optional price overrides (null = plan price). */
+export const userSubscriptions = pgTable("user_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  userId: uuid("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  planId: uuid("plan_id").references(() => subscriptionPlans.id, { onDelete: "set null" }),
+  status: subscriptionStatusEnum("status").notNull().default("trial"),
+  monthlyPrice: numeric("monthly_price", { precision: 12, scale: 2, mode: "number" }),
+  firstMonthPrice: numeric("first_month_price", { precision: 12, scale: 2, mode: "number" }),
+  periodStart: timestamp("period_start", { withTimezone: true }).notNull().defaultNow(),
+  periodEnd: timestamp("period_end", { withTimezone: true }),
+  trialEndsAt: timestamp("trial_ends_at", { withTimezone: true }),
+  cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+  couponCode: text("coupon_code"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Percent/fixed discount code — global or bound to a single user. */
+export const coupons = pgTable(
+  "coupons",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    code: text("code").notNull().unique(),
+    description: text("description"),
+    discountType: discountTypeEnum("discount_type").notNull(),
+    discountValue: numeric("discount_value", { precision: 12, scale: 2, mode: "number" }).notNull(),
+    /** Null = global coupon; otherwise redeemable by this user only. */
+    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+    startsAt: timestamp("starts_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    maxRedemptions: integer("max_redemptions"),
+    timesUsed: integer("times_used").notNull().default(0),
+    duration: couponDurationEnum("duration").notNull().default("once"),
+    /** Months the discount repeats (only for `repeating`). */
+    durationMonths: integer("duration_months"),
+    active: boolean("active").notNull().default(true),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("coupons_user_idx").on(t.userId)],
+);
+
+/** Discount usage history — one row per redeemed coupon. */
+export const couponRedemptions = pgTable(
+  "coupon_redemptions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    couponId: uuid("coupon_id")
+      .notNull()
+      .references(() => coupons.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    code: text("code").notNull(),
+    discountAmount: numeric("discount_amount", { precision: 12, scale: 2, mode: "number" })
+      .notNull()
+      .default(0),
+    redeemedAt: timestamp("redeemed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("coupon_redemptions_coupon_idx").on(t.couponId, t.redeemedAt.desc())],
+);
+
+/** Admin-console change history — who changed what, when. */
+export const adminAuditLog = pgTable(
+  "admin_audit_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    actorEmail: text("actor_email").notNull(),
+    action: text("action").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("admin_audit_log_created_idx").on(t.createdAt.desc())],
+);
+
 /** Internal migration-tracking table written by scripts/apply-migrations.mjs. */
 export const migrations = pgTable("_migrations", {
   name: text("name").primaryKey(),
@@ -170,3 +286,8 @@ export type ProfileRow = typeof profiles.$inferSelect;
 export type TenantRow = typeof tenants.$inferSelect;
 export type TenantUserRow = typeof tenantUsers.$inferSelect;
 export type StoreRegistryRow = typeof storeRegistry.$inferSelect;
+export type SubscriptionPlanRow = typeof subscriptionPlans.$inferSelect;
+export type UserSubscriptionRow = typeof userSubscriptions.$inferSelect;
+export type CouponRow = typeof coupons.$inferSelect;
+export type CouponRedemptionRow = typeof couponRedemptions.$inferSelect;
+export type AdminAuditLogRow = typeof adminAuditLog.$inferSelect;

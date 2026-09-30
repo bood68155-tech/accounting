@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+// (useEffect kept for the body-scroll lock below)
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
@@ -42,7 +43,7 @@ const NAV = [
   },
   {
     section: "Platform",
-    items: [{ href: "/admin", label: "Admin", icon: IconUsers }],
+    items: [{ href: "/admin", label: "Admin Panel", icon: IconUsers }],
   },
   {
     section: "Settings",
@@ -54,12 +55,24 @@ function isActiveHref(pathname: string, href: string) {
   return href === "/dashboard" ? pathname === "/dashboard" : pathname.startsWith(href);
 }
 
-function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarNav({
+  onNavigate,
+  isAdmin = false,
+}: {
+  onNavigate?: () => void;
+  /** Admin Panel entry renders ONLY for the platform-admin email. */
+  isAdmin?: boolean;
+}) {
   const pathname = usePathname();
+
+  // Filter the Platform section: the Admin Panel link exists only for admins.
+  const groups = isAdmin
+    ? NAV
+    : NAV.filter((g) => !g.items.some((i) => i.href === "/admin"));
 
   return (
     <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
-      {NAV.map((group) => (
+      {groups.map((group) => (
         <div key={group.section}>
           <p className="type-kicker mb-2 px-3 text-zinc-600">{group.section}</p>
           <div className="space-y-0.5">
@@ -131,14 +144,24 @@ function TenantFooter({ tenantName }: { tenantName: string }) {
   );
 }
 
-export function Sidebar({ tenantName }: { tenantName: string }) {
+export function Sidebar({
+  tenantName,
+  isAdmin = false,
+}: {
+  tenantName: string;
+  /** Show the Admin Panel nav item — true only for the platform-admin email. */
+  isAdmin?: boolean;
+}) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
-  // Close the drawer whenever the route changes.
-  useEffect(() => {
+  // Close the drawer whenever the route changes — adjusting state during
+  // render (the React-recommended pattern) instead of in an effect.
+  const [lastPathname, setLastPathname] = useState(pathname);
+  if (pathname !== lastPathname) {
+    setLastPathname(pathname);
     setMobileOpen(false);
-  }, [pathname]);
+  }
 
   // Lock body scroll while the drawer is open.
   useEffect(() => {
@@ -157,7 +180,7 @@ export function Sidebar({ tenantName }: { tenantName: string }) {
             <Logo />
           </Link>
         </div>
-        <SidebarNav />
+        <SidebarNav isAdmin={isAdmin} />
         <TenantFooter tenantName={tenantName} />
       </aside>
 
@@ -200,7 +223,7 @@ export function Sidebar({ tenantName }: { tenantName: string }) {
                 <IconX className="h-4 w-4" />
               </button>
             </div>
-            <SidebarNav onNavigate={() => setMobileOpen(false)} />
+            <SidebarNav onNavigate={() => setMobileOpen(false)} isAdmin={isAdmin} />
             <TenantFooter tenantName={tenantName} />
           </aside>
         </div>

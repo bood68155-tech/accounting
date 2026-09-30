@@ -50,7 +50,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <SessionProvider session={session}>
       <div className="flex min-h-screen flex-col bg-app md:flex-row">
-        <Sidebar tenantName={tenantName} />
+        <Sidebar tenantName={tenantName} isAdmin={session.user.isAdmin === true} />
         <div className="flex min-w-0 flex-1 flex-col">{children}</div>
       </div>
     </SessionProvider>

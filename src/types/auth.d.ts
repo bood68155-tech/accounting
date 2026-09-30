@@ -22,6 +22,8 @@ declare module "next-auth" {
       tenantName?: string | null;
       /** Postgres schema holding this tenant's data (tenant_<uuid-hex>). */
       tenantSchema?: string | null;
+      /** True only for the designated platform-admin email(s). */
+      isAdmin?: boolean;
     } & DefaultSession["user"];
   }
 }
@@ -32,5 +34,6 @@ declare module "next-auth/jwt" {
     tenantId?: string | null;
     tenantName?: string | null;
     tenantSchema?: string | null;
+    isAdmin?: boolean;
   }
 }
