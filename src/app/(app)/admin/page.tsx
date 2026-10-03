@@ -6,6 +6,7 @@ import { AdminTabs } from "@/components/admin/admin-tabs";
 import { BillingTab } from "@/components/admin/billing-tab";
 import { CouponsTab } from "@/components/admin/coupons-tab";
 import { AuditTab } from "@/components/admin/audit-tab";
+import { IntegrityTab } from "@/components/admin/integrity-tab";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -28,6 +29,7 @@ import { Table, TBody, TCell, THead, THeadCell, TRow } from "@/components/ui/tab
 import { isAdminEmail } from "@/lib/admin/auth";
 import { ADMIN_PIN_COOKIE, pinTokenMatches } from "@/lib/admin/pin";
 import { fetchAdminData } from "@/lib/admin/queries";
+import { fetchPlatformIntegrity } from "@/lib/admin/integrity";
 import { fetchAdminBillingData } from "@/lib/admin/billing-queries";
 import { auth } from "@/lib/auth";
 import { cn, formatCompactCurrency, formatNumber, formatPercent, relativeTime } from "@/lib/utils";
@@ -58,7 +60,11 @@ export default async function AdminPage() {
     return <PinGate />;
   }
 
-  const [data, billing] = await Promise.all([fetchAdminData(), fetchAdminBillingData()]);
+  const [data, billing, integrity] = await Promise.all([
+    fetchAdminData(),
+    fetchAdminBillingData(),
+    fetchPlatformIntegrity(),
+  ]);
   const { overview, stores, fees, clients } = data;
   const failureRate =
     overview.event_count > 0 ? overview.failed_events / overview.event_count : 0;
@@ -305,6 +311,7 @@ export default async function AdminPage() {
   const billingTab = <BillingTab data={billing} />;
   const couponsTab = <CouponsTab data={billing} />;
   const auditTab = <AuditTab entries={billing.auditLog} />;
+  const integrityTab = <IntegrityTab data={integrity} />;
 
   return (
     <main className="flex min-w-0 flex-1 flex-col">
@@ -332,6 +339,7 @@ export default async function AdminPage() {
             { id: "overview", label: "Overview", content: overviewTab },
             { id: "billing", label: "Billing", content: billingTab },
             { id: "coupons", label: "Coupons", content: couponsTab },
+            { id: "integrity", label: "Integrity", content: integrityTab },
             { id: "audit", label: "Audit log", content: auditTab },
           ]}
         />

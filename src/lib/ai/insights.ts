@@ -1,5 +1,7 @@
 import type { BalanceSheet, IncomeStatement, JournalEntry, Order, StoreStats } from "@/types";
 import type { Anomaly, CashFlowForecast } from "@/lib/ai/categorizer";
+import type { FinancialHealth } from "@/lib/accounting/ratios";
+import type { CashFlowStatement } from "@/lib/accounting/cashFlow";
 
 /**
  * ── AI financial insights (natural-language generation over the ledger) ──────
@@ -27,6 +29,10 @@ export interface FinancialSnapshot {
   anomalies: Anomaly[];
   storeName: string;
   currency: string;
+  /** Optional ratio battery — when present, liquidity/efficiency insights are added. */
+  ratios?: FinancialHealth;
+  /** Optional direct-method cash flow statement — adds a cash-movement insight. */
+  cashFlow?: CashFlowStatement;
 }
 
 /** Top products by revenue across all orders (for product-mix insights). */
@@ -124,6 +130,42 @@ export function generateInsights(snapshot: FinancialSnapshot): Insight[] {
       tone: anomaly.severity === "high" ? "warning" : "neutral",
       title: anomaly.title,
       body: anomaly.detail,
+    });
+  }
+
+  // ── Financial-health ratios (liquidity & efficiency) ────────────────────────
+  if (snapshot.ratios) {
+    const r = snapshot.ratios;
+    const liquidity = r.ratios.find((x) => x.key === "current_ratio");
+    const ccc = r.ratios.find((x) => x.key === "cash_conversion_cycle_days");
+    const parts: string[] = [];
+    if (liquidity?.value != null) {
+      parts.push(`current ratio ${liquidity.value.toFixed(2)}× (${liquidity.status})`);
+    }
+    if (ccc?.value != null) {
+      parts.push(`cash conversion cycle ${ccc.value.toFixed(0)} days (${ccc.status})`);
+    }
+    insights.push({
+      tone: r.score >= 70 ? "positive" : r.score >= 50 ? "neutral" : "warning",
+      title: `Financial health score ${r.score}/100 (grade ${r.grade})`,
+      body:
+        parts.length > 0
+          ? `${parts.join(", ")}. ${
+              r.working_capital >= 0
+                ? `Working capital is positive at ${r.working_capital.toFixed(0)} ${cur}.`
+                : `Working capital is negative (${r.working_capital.toFixed(0)} ${cur}) — tighten collections and supplier terms.`
+            }`
+          : "Not enough ledger data yet to score liquidity and efficiency ratios.",
+    });
+  }
+
+  // ── Statement of cash flows ─────────────────────────────────────────────────
+  if (snapshot.cashFlow && snapshot.cashFlow.operating.lines.length > 0) {
+    const cf = snapshot.cashFlow;
+    insights.push({
+      tone: cf.net_change >= 0 ? "positive" : "warning",
+      title: `Net cash ${cf.net_change >= 0 ? "increased" : "decreased"} ${Math.abs(cf.net_change).toFixed(0)} ${cur} in the period`,
+      body: `Operating activities contributed ${cf.operating.net.toFixed(0)} ${cur}; financing ${cf.financing.net.toFixed(0)} ${cur}. Cash moved from ${cf.opening_cash.toFixed(0)} to ${cf.closing_cash.toFixed(0)}${cf.reconciles ? " (reconciled ✓)" : ""}.`,
     });
   }
 

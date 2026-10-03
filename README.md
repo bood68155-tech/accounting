@@ -23,13 +23,14 @@ on **Neon Postgres**, with tenant scoping enforced in the data layer.
 | **True net profit** | Per-order profit = net sales − COGS (item cost × qty) − gateway fees − shipping cost − refunds (`src/lib/accounting/profitEngine.ts`) |
 | **Double-entry books** | Every sale posts balanced journal entries — Dr Cash, Cr Sales, Dr COGS, Cr Inventory — with a trial balance that always matches (`src/lib/accounting/doubleEntry.ts`) |
 | **Statements** | Income statement (P&L) **and balance sheet** (with AR/AP and retained earnings), generated from the ledger (`src/lib/accounting/`) |
+| **Cash flow & ratios** | Direct-method **statement of cash flows** (opening + net change = closing), a full **ratio battery** (liquidity, profitability, efficiency, leverage) with a 0–100 financial-health score and the cash-conversion cycle, plus a **trial balance** with CSV export (`src/lib/accounting/cashFlow.ts`, `ratios.ts`, `trialBalance.ts`, `GET /reports/financial-health`) |
 | **AR / AP** | Orders that arrive unpaid are booked as credit sales (Dr Accounts Receivable) and settled automatically when a payment event lands (`createCreditSaleEntry` / `createPaymentCollectionEntry`) |
 | **Catalog sync** | Pull products + unit costs from the Shopify Admin API and Salla Admin API (`/products`, `POST /api/products/sync`); catalog costs auto-fill COGS on every incoming order |
 | **AI engine** | Transaction categorization & ledger mapping, statistical anomaly detection, cash-flow forecasting, natural-language insights, and an embedded AI Financial Assistant chat (`src/lib/ai/`) |
 | **Deep store research** | Real-time business analytics (gross/net margins, AOV, fee & COGS share, top SKUs, ROAS-ready ad-spend placeholder), inventory warnings, and a continuous store-health **audit** (missing COGS, below-cost sales, anomalous transactions, refund spikes, catalog coverage, ledger balance) with a 0–100 health score (`src/lib/analytics/storeResearch.ts`, `GET /api/analytics/overview`) |
 | **Auth: Google + Email OTP** | "Continue with Google" (NextAuth v5 OAuth — first login auto-provisions the user + tenant schema) and a 6-digit email OTP that must be verified before any signup or password sign-in completes (`src/lib/auth/otp.ts`) |
 | **Multi-tenant isolation** | Schema-per-tenant: every workspace owns a dedicated Postgres schema; tenant queries are always schema-qualified in the data layer |
-| **Admin console** | Platform-wide `/admin` console aggregating every tenant schema |
+| **Admin console** | Platform-wide `/admin` console aggregating every tenant schema, plus a **ledger-integrity** check (Σ debits = Σ credits across every tenant) (`GET /api/admin/integrity`) |
 
 ## 🧱 Multi-tenant architecture (schema-per-tenant)
 
@@ -244,3 +245,4 @@ HMAC-signed cookie) adds a second factor.
 | `/api/admin/stores/[id]` | PATCH | Change store status (resolved via `store_registry`) |
 | `/api/admin/events` | GET | Webhook events (+ `?provider=&status=`) |
 | `/api/admin/fees` | GET | Gateway fee breakdown |
+| `/api/admin/integrity` | GET | Platform-wide double-entry integrity across all tenant schemas |

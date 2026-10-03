@@ -21,11 +21,14 @@ Guidance for AI coding agents working in this repository.
   - `profitEngine.ts` — `computeOrderProfit`, `computeStats`, `computeMonthlySeries`
   - `incomeStatement.ts` — P&L builders (from orders and from journal entries)
   - `balanceSheet.ts` — `buildBalanceSheet` (GL-derived, retained earnings close)
+  - `cashFlow.ts` — `buildCashFlowStatement` (direct method from Cash-account lines; operating/investing/financing)
+  - `ratios.ts` — `computeFinancialRatios` (liquidity/profitability/efficiency/leverage + 0–100 health score, cash-conversion cycle)
+  - `trialBalance.ts` — `buildTrialBalance` + `trialBalanceToCsv` (Σ debits = Σ credits control report)
   - `chartOfAccounts.ts` — account codes 1000–5900
 - The AI engine lives in `src/lib/ai/`:
   - `categorizer.ts` — `categorizeTransaction` (rule cascade → account code + confidence), `detectAnomalies` (z-scores, margin floors, refund spikes), `forecastCashFlow` (deterministic trend + momentum)
   - `insights.ts` — `generateInsights` (grounded NL insights; numbers always reconcile with the ledger)
-  - `agent.ts` — `askFinancialAgent`: tool-using agent (phidata-style); deterministic router by default, optional OpenAI phrasing when `OPENAI_API_KEY` is set — the LLM only rephrases deterministic tool output, it never computes numbers
+  - `agent.ts` — `askFinancialAgent`: tool-using agent (phidata-style); deterministic router by default, optional OpenAI phrasing when `OPENAI_API_KEY` is set — the LLM only rephrases deterministic tool output, it never computes numbers. Tools include profitability, balance, forecast, anomalies, ledger, categorization, analytics, audit, ratios and cashflow.
 - Provider adapters in `src/lib/providers/*` verify signatures and normalize
   payloads to `NormalizedOrder`; webhook routes in `src/app/api/webhooks/*` call
   `src/lib/webhooks/ingest.ts` (resolve tenant schema → enrich item costs from
@@ -62,3 +65,9 @@ Guidance for AI coding agents working in this repository.
   anon/authenticated and runs only via the service role (trigger or seed script).
 - The webhook `store_id` parameter is required and must be a real store in the
   tenant's schema — the registry maps it to the right schema.
+
+## Admin utilities
+
+- `src/lib/admin/integrity.ts` — `fetchPlatformIntegrity()` reconciles every
+  tenant schema (Σ debits = Σ credits per entry), surfaced at
+  `GET /api/admin/integrity` and the admin **Integrity** tab.

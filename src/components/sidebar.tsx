@@ -37,6 +37,7 @@ const NAV = [
       { href: "/ledger", label: "General Ledger", icon: IconLedger },
       { href: "/reports/income-statement", label: "Income Statement", icon: IconReport },
       { href: "/reports/balance-sheet", label: "Balance Sheet", icon: IconReport },
+      { href: "/reports/financial-health", label: "Financial Health", icon: IconReport },
       { href: "/products", label: "Products & COGS", icon: IconDashboard },
       { href: "/assistant", label: "AI Assistant", icon: IconSparkles },
     ],

@@ -1,6 +1,8 @@
 import type { BalanceSheet, IncomeStatement, JournalEntry, Order, Product, StoreStats, Store } from "@/types";
 import { categorizeTransaction, detectAnomalies, forecastCashFlow } from "@/lib/ai/categorizer";
 import { generateInsights } from "@/lib/ai/insights";
+import { computeFinancialRatios, formatRatio } from "@/lib/accounting/ratios";
+import { buildCashFlowStatement } from "@/lib/accounting/cashFlow";
 import { runDeepStoreResearch } from "@/lib/analytics/storeResearch";
 import { round2 } from "@/lib/utils";
 
@@ -32,7 +34,15 @@ export interface AgentContext {
 export interface AgentAnswer {
   answer: string;
   /** Which grounding source produced the answer (for UI transparency). */
-  source: "forecast" | "profitability" | "anomalies" | "ledger" | "categorization" | "general";
+  source:
+    | "forecast"
+    | "profitability"
+    | "anomalies"
+    | "ledger"
+    | "categorization"
+    | "ratios"
+    | "cashflow"
+    | "general";
   suggestions: string[];
 }
 
@@ -185,6 +195,31 @@ function buildTools(ctx: AgentContext) {
       return [head, ...lines].join("\n");
     },
 
+    ratios: (): string => {
+      const health = computeFinancialRatios(ctx.balanceSheet, ctx.incomeStatement);
+      return [
+        `**Financial health — ${ctx.storeName}: ${health.score}/100 (grade ${health.grade})**`,
+        ...health.ratios.map((r) => `• ${r.label}: ${formatRatio(r)} (${r.status})`),
+        `• Working capital: ${health.working_capital.toFixed(2)} ${ctx.currency}`,
+      ].join("\n");
+    },
+
+    cashflow: (): string => {
+      const cf = buildCashFlowStatement(ctx.journalEntries);
+      if (cf.operating.lines.length === 0 && cf.financing.lines.length === 0) {
+        return "No cash movements are posted in the ledger yet — orders and payments will populate the statement of cash flows.";
+      }
+      const money = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(2)} ${ctx.currency}`;
+      return [
+        `**Statement of cash flows (${cf.period.from} → ${cf.period.to})**`,
+        ...cf.operating.lines.map((l) => `• [Operating] ${l.label}: ${money(l.amount)}`),
+        `• Operating net: ${money(cf.operating.net)}`,
+        ...cf.financing.lines.map((l) => `• [Financing] ${l.label}: ${money(l.amount)}`),
+        `• Financing net: ${money(cf.financing.net)}`,
+        `• **Net change in cash: ${money(cf.net_change)}** (opening ${cf.opening_cash.toFixed(2)} → closing ${cf.closing_cash.toFixed(2)}${cf.reconciles ? ", reconciled ✓" : ""})`,
+      ].join("\n");
+    },
+
     overview: (): string => {
       const insights = generateInsights({
         stats: ctx.stats,
@@ -197,6 +232,8 @@ function buildTools(ctx: AgentContext) {
         anomalies: detectAnomalies(ctx.orders),
         storeName: ctx.storeName,
         currency: ctx.currency,
+        ratios: computeFinancialRatios(ctx.balanceSheet, ctx.incomeStatement),
+        cashFlow: buildCashFlowStatement(ctx.journalEntries),
       });
       const cur = ctx.currency;
       const head = `**${ctx.storeName} — financial overview**\n• Revenue (30d): ${ctx.stats.period_revenue.toFixed(2)} ${cur} · True net profit: ${ctx.stats.period_net_profit.toFixed(2)} ${cur} · ${ctx.stats.period_orders} orders`;
@@ -209,6 +246,10 @@ function buildTools(ctx: AgentContext) {
 /** Keyword router for the no-LLM path — maps questions to tools. */
 function routeQuestion(question: string): keyof ReturnType<typeof buildTools> | "unknown" {
   const q = question.toLowerCase();
+  if (/\b(cash flow statement|statement of cash flows|operating cash|cash movement|where .*(cash|money).*(go|went)|reconcil)/.test(q))
+    return "cashflow";
+  if (/\b(ratio|ratios|liquidity|current ratio|quick ratio|working capital|cash conversion|financial health|dso|dpo|dio|debt to equity|return on equity)\b/.test(q))
+    return "ratios";
   if (/\b(forecast|predict|next week|next month|projection|cash flow|cashflow)\b/.test(q)) return "forecast";
   if (/\b(anomal|unusual|spike|suspicious|outlier|below cost|refund rate)\b/.test(q)) return "anomalies";
   if (/\b(balance sheet|assets|liabilit|equity|receivable|payable|inventory value|retained)\b/.test(q)) return "balance";
@@ -224,9 +265,10 @@ function routeQuestion(question: string): keyof ReturnType<typeof buildTools> | 
 const DEFAULT_SUGGESTIONS = [
   "How profitable am I this month?",
   "Forecast my cash flow",
+  "Show my financial health",
+  "Show my statement of cash flows",
   "Any anomalies in my orders?",
   "Run a store health audit",
-  "What are my top SKUs?",
 ];
 
 export async function askFinancialAgent(question: string, ctx: AgentContext): Promise<AgentAnswer> {
@@ -258,21 +300,25 @@ export async function askFinancialAgent(question: string, ctx: AgentContext): Pr
       const grounded =
         route === "forecast"
           ? tools.forecast()
-          : route === "anomalies"
-            ? tools.anomalies()
-            : route === "balance"
-              ? tools.balance()
-              : route === "categorize"
-                ? tools.categorize(question)
-                : route === "ledger"
-                  ? tools.ledger(question)
-                  : route === "audit"
-                    ? tools.audit()
-                    : route === "analytics"
-                      ? tools.analytics()
-                      : route === "profitability"
-                        ? tools.profitability()
-                        : tools.overview();
+          : route === "cashflow"
+            ? tools.cashflow()
+            : route === "ratios"
+              ? tools.ratios()
+              : route === "anomalies"
+                ? tools.anomalies()
+                : route === "balance"
+                  ? tools.balance()
+                  : route === "categorize"
+                    ? tools.categorize(question)
+                    : route === "ledger"
+                      ? tools.ledger(question)
+                      : route === "audit"
+                        ? tools.audit()
+                        : route === "analytics"
+                          ? tools.analytics()
+                          : route === "profitability"
+                            ? tools.profitability()
+                            : tools.overview();
 
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -330,6 +376,18 @@ export async function askFinancialAgent(question: string, ctx: AgentContext): Pr
       return { answer: tools.analytics(), source: "profitability", suggestions: ["Run a store health audit", "Any anomalies?", "Forecast my cash flow"] };
     case "audit":
       return { answer: tools.audit(), source: "anomalies", suggestions: ["What are my top SKUs?", "How profitable am I?", "Give me an overview"] };
+    case "ratios":
+      return {
+        answer: tools.ratios(),
+        source: "ratios",
+        suggestions: ["Show my statement of cash flows", "Forecast my cash flow", "Give me an overview"],
+      };
+    case "cashflow":
+      return {
+        answer: tools.cashflow(),
+        source: "cashflow",
+        suggestions: ["Show my financial health", "How profitable am I?", "Give me an overview"],
+      };
     case "overview":
       return { answer: tools.overview(), source: "general", suggestions: suggestionsFor("general") };
     default:
