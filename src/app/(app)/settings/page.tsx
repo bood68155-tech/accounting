@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Topbar } from "@/components/topbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -97,27 +96,6 @@ export default async function SettingsPage() {
           </CardContent>
         </Card>
 
-        {stores.length === 0 ? (
-          <Card>
-            <CardHeader>
-              <CardTitle>No stores yet</CardTitle>
-              <CardDescription>
-                Connect a store before connecting Telegram — the bot is bound to one store at a
-                time.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Link href="/stores" className="text-sm text-white underline underline-offset-4 hover:opacity-70">
-                Go to Stores →
-              </Link>
-            </CardContent>
-          </Card>
-        ) : (
-          stores.map((store) => (
-            <TelegramConnectCard key={store.id} storeId={store.id} storeName={store.name} />
-          ))
-        )}
-
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div>
@@ -144,6 +122,14 @@ export default async function SettingsPage() {
             </p>
           </CardContent>
         </Card>
+
+        {stores.length === 0 ? (
+          <TelegramConnectCard />
+        ) : (
+          stores.map((store) => (
+            <TelegramConnectCard key={store.id} storeId={store.id} storeName={store.name} />
+          ))
+        )}
 
         <Card className="border-red-500/25">
           <CardHeader>

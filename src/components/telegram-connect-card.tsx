@@ -42,7 +42,12 @@ export function TelegramConnectCard({
   storeId,
   storeName,
 }: {
-  storeId: string;
+  /**
+   * Store the chat binds to. Omitted when the owner has no store yet — the card
+   * still renders (so the feature is discoverable) but explains what to do
+   * instead of calling an endpoint that would 400.
+   */
+  storeId?: string;
   /** Shown as a kicker when one page renders a card per store. */
   storeName?: string;
 }) {
@@ -53,9 +58,12 @@ export function TelegramConnectCard({
   const [notice, setNotice] = useState<string | null>(null);
   const [awaitingBind, setAwaitingBind] = useState(false);
 
-  const endpoint = `/api/notifications/telegram?store_id=${encodeURIComponent(storeId)}`;
+  const endpoint = storeId
+    ? `/api/notifications/telegram?store_id=${encodeURIComponent(storeId)}`
+    : null;
 
   const loadStatus = useCallback(async (): Promise<StatusResponse | null> => {
+    if (!endpoint) return null;
     try {
       const res = await fetch(endpoint, { cache: "no-store" });
       if (!res.ok) return null;
@@ -66,6 +74,10 @@ export function TelegramConnectCard({
   }, [endpoint]);
 
   useEffect(() => {
+    // Nothing to check without a store. `loading` is left untouched here on
+    // purpose — the card renders a "Needs a store" badge instead, so it never
+    // sits on "Checking…" forever, and no setState runs synchronously.
+    if (!endpoint) return;
     let cancelled = false;
     (async () => {
       const data = await loadStatus();
@@ -76,7 +88,7 @@ export function TelegramConnectCard({
     return () => {
       cancelled = true;
     };
-  }, [loadStatus]);
+  }, [loadStatus, endpoint]);
 
   /**
    * While the deep link is open, poll for the binding. Stops on success, on
@@ -104,6 +116,7 @@ export function TelegramConnectCard({
   }, [awaitingBind, loadStatus]);
 
   async function connect(): Promise<void> {
+    if (!endpoint) return;
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -127,6 +140,7 @@ export function TelegramConnectCard({
   }
 
   async function disconnect(): Promise<void> {
+    if (!endpoint) return;
     setBusy(true);
     setError(null);
     try {
@@ -164,7 +178,9 @@ export function TelegramConnectCard({
               Receive the daily accounting digest — revenue, profit, cash and tax — in Telegram.
             </CardDescription>
           </div>
-          {loading ? (
+          {!storeId ? (
+            <Badge variant="warning">Needs a store</Badge>
+          ) : loading ? (
             <Badge variant="neutral">Checking…</Badge>
           ) : connected ? (
             <Badge variant="success">
@@ -198,6 +214,13 @@ export function TelegramConnectCard({
               </dd>
             </div>
           </dl>
+        ) : !storeId ? (
+          <div className="border border-zinc-800 bg-zinc-950 p-4">
+            <p className="text-sm text-zinc-300">
+              Connect a store first — a Telegram chat is bound to one store at a time. Once your
+              store exists this card turns into the connect button.
+            </p>
+          </div>
         ) : (
           <div className="border border-zinc-800 bg-zinc-950 p-4">
             <p className="text-sm text-zinc-300">
@@ -229,7 +252,12 @@ export function TelegramConnectCard({
         )}
 
         <div className="flex flex-wrap items-center gap-3">
-          {connected ? (
+          {!storeId ? (
+            <Button variant="outline" size="md" disabled>
+              <IconExternal className="h-4 w-4" />
+              Connect Telegram Bot
+            </Button>
+          ) : connected ? (
             <>
               <Button variant="danger" size="sm" onClick={disconnect} disabled={busy}>
                 <IconX className="h-3.5 w-3.5" />
