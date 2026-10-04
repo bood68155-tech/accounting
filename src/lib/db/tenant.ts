@@ -241,6 +241,54 @@ function buildTenantTables(name: string) {
     (t) => [index("integration_events_store_idx").on(t.storeId, t.processedAt.desc())],
   );
 
+  // ── Daily digest notifications ─────────────────────────────────────────
+  // One row per store: which channels, at what local hour, which sections.
+  const digestSettings = s.table("digest_settings", {
+    storeId: uuid("store_id")
+      .primaryKey()
+      .references(() => stores.id, { onDelete: "cascade" }),
+    enabled: boolean("enabled").notNull().default(true),
+    /** ChannelTarget[] — see src/lib/notifications/types.ts. */
+    channels: jsonb("channels").$type<unknown[]>().notNull().default([]),
+    sendHour: integer("send_hour").notNull().default(8),
+    timezone: text("timezone").notNull().default("UTC"),
+    currency: text("currency").notNull().default("USD"),
+    sections: jsonb("sections").$type<Record<string, unknown>>().notNull().default({}),
+    skipWhenEmpty: boolean("skip_when_empty").notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  });
+
+  // Append-only delivery log. The unique constraint on
+  // (store_id, digest_date, channel, destination) is what actually prevents a
+  // double send — the runner's pre-check is only a fast path.
+  const digestDeliveries = s.table(
+    "digest_deliveries",
+    {
+      id: uuid("id").primaryKey().defaultRandom(),
+      storeId: uuid("store_id")
+        .notNull()
+        .references(() => stores.id, { onDelete: "cascade" }),
+      digestDate: date("digest_date").notNull(),
+      channel: text("channel").notNull(),
+      destination: text("destination").notNull(),
+      status: text("status").notNull(),
+      attempts: integer("attempts").notNull().default(0),
+      providerMessageId: text("provider_message_id"),
+      error: text("error"),
+      createdAt: createdAt(),
+    },
+    (t) => [
+      unique("digest_deliveries_store_date_channel_dest_key").on(
+        t.storeId,
+        t.digestDate,
+        t.channel,
+        t.destination,
+      ),
+      index("digest_deliveries_store_date_idx").on(t.storeId, t.digestDate.desc()),
+    ],
+  );
+
   return {
     stores,
     products,
@@ -250,6 +298,8 @@ function buildTenantTables(name: string) {
     journalEntries,
     journalLines,
     integrationEvents,
+    digestSettings,
+    digestDeliveries,
   };
 }
 
@@ -276,3 +326,5 @@ export type TenantOrderItemRow = TenantTables["orderItems"]["$inferSelect"];
 export type TenantJournalEntryRow = TenantTables["journalEntries"]["$inferSelect"];
 export type TenantJournalLineRow = TenantTables["journalLines"]["$inferSelect"];
 export type TenantEventRow = TenantTables["integrationEvents"]["$inferSelect"];
+export type TenantDigestSettingsRow = TenantTables["digestSettings"]["$inferSelect"];
+export type TenantDigestDeliveryRow = TenantTables["digestDeliveries"]["$inferSelect"];
