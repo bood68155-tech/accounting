@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { deliverDigest, type DigestStore, type DigestDeliveryRecord } from "@/lib/notifications/delivery";
 import { buildDailyDigest } from "@/lib/notifications/digest";
-import { digestIdempotencyKey, type DigestSettings } from "@/lib/notifications/types";
+import {
+  digestIdempotencyKey,
+  UNLINKED_TELEGRAM,
+  type DigestSettings,
+} from "@/lib/notifications/types";
 import { addDaysIso, digestPeriodFor, isDueForSend, runDailyDigest, zonedDateParts } from "@/lib/notifications/runner";
 import type { HttpClient } from "@/lib/notifications/channels";
 import type { Order } from "@/types";
@@ -68,6 +72,7 @@ const settings = (over: Partial<DigestSettings> = {}): DigestSettings => ({
   currency: "USD",
   sections: { revenue: true, orders: true, cash: true, tax: true, credit: true, top_products: true },
   skip_when_empty: true,
+  telegram: { ...UNLINKED_TELEGRAM },
   ...over,
 });
 

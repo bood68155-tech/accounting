@@ -43,6 +43,31 @@ export const ALL_DIGEST_SECTIONS: DigestSections = {
   top_products: true,
 };
 
+/**
+ * The owner's linked Telegram account.
+ *
+ * Populated by the `/start <token>` deep-link handshake, not by typing a chat
+ * id — a bound chat_id is the only thing that can receive a digest, so it is
+ * always proof the owner personally completed the handshake in that chat.
+ */
+export interface TelegramBinding {
+  chat_id: string | null;
+  chat_title: string | null;
+  username: string | null;
+  /** ISO timestamp of when the handshake completed. */
+  linked_at: string | null;
+  /** Bot that owns the binding, so a bot swap is visible rather than silent. */
+  bot_username: string | null;
+}
+
+export const UNLINKED_TELEGRAM: TelegramBinding = {
+  chat_id: null,
+  chat_title: null,
+  username: null,
+  linked_at: null,
+  bot_username: null,
+};
+
 export interface DigestSettings {
   store_id: string;
   enabled: boolean;
@@ -55,6 +80,8 @@ export interface DigestSettings {
   sections: DigestSections;
   /** Stay silent on a day with no orders and no alerts. */
   skip_when_empty: boolean;
+  /** The owner's linked Telegram account, if any. */
+  telegram: TelegramBinding;
 }
 
 export const DEFAULT_DIGEST_SETTINGS: DigestSettings = {
@@ -66,6 +93,7 @@ export const DEFAULT_DIGEST_SETTINGS: DigestSettings = {
   currency: "USD",
   sections: { ...ALL_DIGEST_SECTIONS },
   skip_when_empty: true,
+  telegram: { ...UNLINKED_TELEGRAM },
 };
 
 export type DeliveryStatus = "sent" | "failed" | "skipped";

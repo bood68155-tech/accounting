@@ -4,6 +4,7 @@ import type { DigestDeliveryRecord, DigestStore } from "@/lib/notifications/deli
 import {
   ALL_DIGEST_SECTIONS,
   DEFAULT_DIGEST_SETTINGS,
+  UNLINKED_TELEGRAM,
   type DigestChannelId,
   type DigestSections,
   type DigestSettings,
@@ -68,7 +69,14 @@ export async function fetchDigestSettings(
     .limit(1);
 
   const row = rows[0];
-  if (!row) return { ...DEFAULT_DIGEST_SETTINGS, store_id: storeId, sections: { ...ALL_DIGEST_SECTIONS } };
+  if (!row) {
+    return {
+      ...DEFAULT_DIGEST_SETTINGS,
+      store_id: storeId,
+      sections: { ...ALL_DIGEST_SECTIONS },
+      telegram: { ...UNLINKED_TELEGRAM },
+    };
+  }
 
   return {
     store_id: row.storeId,
@@ -79,6 +87,13 @@ export async function fetchDigestSettings(
     currency: row.currency,
     sections: parseSections(row.sections),
     skip_when_empty: row.skipWhenEmpty,
+    telegram: {
+      chat_id: row.telegramChatId,
+      chat_title: row.telegramChatTitle,
+      username: row.telegramUsername,
+      linked_at: row.telegramLinkedAt ? row.telegramLinkedAt.toISOString() : null,
+      bot_username: row.telegramBotUsername,
+    },
   };
 }
 

@@ -173,6 +173,40 @@ export const storeRegistry = pgTable("store_registry", {
 // ── Billing: plans, subscriptions, coupons, audit log (admin console) ────────
 
 /** Plan tier with first-month / recurring monthly pricing. */
+/**
+ * ── Telegram link tokens ────────────────────────────────────────────────────
+ * Shared lookup for the `/start <token>` deep-link handshake. Telegram inbound
+ * webhooks carry no session and therefore no tenant context, so the
+ * token → tenant mapping has to live in the public schema for the same reason
+ * `store_registry` does: to resolve an owning tenant from an inbound request.
+ *
+ * Only the SHA-256 hash of the token is stored, so a leaked row cannot be
+ * replayed as a working deep link.
+ */
+export const telegramLinkTokens = pgTable(
+  "telegram_link_tokens",
+  {
+    /** SHA-256 hex of the token — never the token itself. */
+    tokenHash: text("token_hash").primaryKey(),
+    tenantId: uuid("tenant_id")
+      .notNull()
+      .references(() => tenants.id, { onDelete: "cascade" }),
+    /** Denormalized so binding needs a single query, not a join. */
+    schemaName: text("schema_name").notNull(),
+    storeId: uuid("store_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    boundChatId: text("bound_chat_id"),
+    boundChatTitle: text("bound_chat_title"),
+  },
+  (t) => [
+    // One live token per store: re-minting replaces the previous one.
+    unique("telegram_link_tokens_store_key").on(t.schemaName, t.storeId),
+    index("telegram_link_tokens_expires_idx").on(t.expiresAt),
+  ],
+);
+
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: uuid("id").primaryKey().defaultRandom(),
   code: text("code").notNull().unique(),

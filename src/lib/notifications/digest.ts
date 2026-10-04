@@ -49,10 +49,16 @@ export interface BuildDigestInput {
  * the period end — slicing first would understate them.
  */
 export function buildDailyDigest(input: BuildDigestInput): DailyDigest {
-  const { store, orders, entries, period } = input;
+  const { store, period } = input;
   const sections = input.sections ?? { ...ALL_DIGEST_SECTIONS };
   const topLimit = input.top_product_limit ?? 5;
   const currency = store.currency || "USD";
+
+  // Tenant isolation: a digest is computed from its own store's records only.
+  // Scoped here rather than relying on every loader to filter, so one caller
+  // passing a wider list can never blend another store's P&L into this one.
+  const entries = input.entries.filter((e) => e.store_id === store.id);
+  const orders = input.orders.filter((o) => o.store_id === store.id);
 
   const statement = buildIncomeStatementFromEntries(entries, period.from, period.to);
   const sheet = buildBalanceSheet(entries, period.to);

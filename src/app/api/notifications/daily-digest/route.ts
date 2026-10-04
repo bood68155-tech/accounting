@@ -15,6 +15,7 @@ import {
   type RunDigestResult,
 } from "@/lib/notifications/runner";
 import { buildDailyDigest } from "@/lib/notifications/digest";
+import { resolveDigestTargets } from "@/lib/notifications/delivery";
 import type { HttpClient } from "@/lib/notifications/channels";
 
 /**
@@ -82,7 +83,9 @@ export async function POST(request: Request) {
     if (!target) continue;
     try {
       const settings = await fetchDigestSettings(target.schema, target.store.id);
-      if (!settings.enabled || settings.channels.length === 0) continue;
+      // resolveDigestTargets merges the linked chat with the explicit channel
+      // list, so an owner who connected via /start still gets dispatched to.
+      if (!settings.enabled || resolveDigestTargets(settings).length === 0) continue;
       if (!force && !isDueForSend(settings, now)) continue;
 
       const period = digestPeriodFor(now, settings.timezone);

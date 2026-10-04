@@ -255,6 +255,16 @@ function buildTenantTables(name: string) {
     currency: text("currency").notNull().default("USD"),
     sections: jsonb("sections").$type<Record<string, unknown>>().notNull().default({}),
     skipWhenEmpty: boolean("skip_when_empty").notNull().default(true),
+    // ── Telegram binding (deep-linked via /start <token>) ───────────────────
+    /** The owner's Telegram chat id; null until the handshake completes. */
+    telegramChatId: text("telegram_chat_id"),
+    /** Chat/group title, so the settings UI can name what is connected. */
+    telegramChatTitle: text("telegram_chat_title"),
+    /** Telegram @handle, when the chat has one. */
+    telegramUsername: text("telegram_username"),
+    telegramLinkedAt: timestamp("telegram_linked_at", { withTimezone: true }),
+    /** Bot that owns the binding, so a bot swap is visible rather than silent. */
+    telegramBotUsername: text("telegram_bot_username"),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   });

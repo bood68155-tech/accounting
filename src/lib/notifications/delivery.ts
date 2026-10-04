@@ -10,6 +10,7 @@ import {
   type DailyDigest,
   type DeliveryAttempt,
   type DeliveryRunResult,
+  type ChannelTarget,
   type DigestChannelId,
   type DigestSettings,
 } from "@/lib/notifications/types";
@@ -118,6 +119,49 @@ async function deliverToTarget(
 }
 
 /**
+ * The destinations a digest should go to.
+ *
+ * The owner's linked Telegram chat is always included — connecting the bot is
+ * the act of subscribing to the digest, so a linked chat is implicitly a
+ * delivery target even if nobody ever edited the channels array. Explicitly
+ * configured targets are merged on top, de-duplicated by channel+destination,
+ * so a linked chat never receives the same message twice.
+ *
+ * Pure: takes settings, returns targets. No database, no clock.
+ */
+export function resolveDigestTargets(settings: DigestSettings): ChannelTarget[] {
+  const targets: ChannelTarget[] = [];
+
+  const push = (target: ChannelTarget) => {
+    const clash = targets.some(
+      (t) => t.channel === target.channel && t.destination === target.destination,
+    );
+    if (!clash) targets.push(target);
+  };
+
+  // Linked chat first, so it survives even if the channels array is malformed.
+  const linked = settings.telegram?.chat_id;
+  if (linked && linked.trim() !== "") {
+    push({
+      channel: "telegram",
+      destination: linked.trim(),
+      label:
+        settings.telegram.chat_title ??
+        (settings.telegram.username
+          ? `@${settings.telegram.username.replace(/^@/, "")}`
+          : "Linked Telegram"),
+    });
+  }
+
+  for (const target of settings.channels ?? []) {
+    if (!target?.channel || !target.destination) continue;
+    push(target);
+  }
+
+  return targets;
+}
+
+/**
  * Deliver the digest to every configured channel.
  *
  * A channel with no credentials is reported as `skipped` rather than `failed`:
@@ -147,7 +191,7 @@ export async function deliverDigest(
 
   const results: DeliveryAttempt[] = [];
 
-  for (const target of settings.channels) {
+  for (const target of resolveDigestTargets(settings)) {
     const key = digestIdempotencyKey(
       settings.store_id,
       options.digestDate,
