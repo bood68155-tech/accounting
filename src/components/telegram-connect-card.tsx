@@ -38,7 +38,14 @@ const POLL_INTERVAL_MS = 3000;
 /** Give up after ~1 minute; Telegram binding is near-instant when it works. */
 const POLL_TIMEOUT_MS = 60_000;
 
-export function TelegramConnectCard({ storeId }: { storeId: string }) {
+export function TelegramConnectCard({
+  storeId,
+  storeName,
+}: {
+  storeId: string;
+  /** Shown as a kicker when one page renders a card per store. */
+  storeName?: string;
+}) {
   const [status, setStatus] = useState<StatusResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -148,6 +155,7 @@ export function TelegramConnectCard({ storeId }: { storeId: string }) {
       <CardHeader>
         <div className="flex items-start justify-between gap-4">
           <div className="space-y-1">
+            {storeName && <p className="type-kicker text-zinc-600">{storeName}</p>}
             <CardTitle className="flex items-center gap-2">
               <IconBell className="h-4 w-4" />
               Telegram

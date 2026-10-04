@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   createLinkToken,
   describeChat,
@@ -8,8 +8,10 @@ import {
   isValidLinkToken,
   normalizeChatId,
   parseTelegramCommand,
+  resolveTelegramBotUsername,
   telegramDeepLink,
   verifyTelegramWebhookSecret,
+  DEFAULT_TELEGRAM_BOT_USERNAME,
   LINK_TOKEN_PREFIX,
 } from "@/lib/notifications/telegram";
 import { resolveDigestTargets } from "@/lib/notifications/delivery";
@@ -71,6 +73,44 @@ describe("link tokens", () => {
     // A leading @ is tolerated so the env var can be pasted either way.
     expect(telegramDeepLink("@bood_store_bot", "tgl_abc")).toBe(
       "https://t.me/bood_store_bot?start=tgl_abc",
+    );
+  });
+});
+
+describe("resolveTelegramBotUsername", () => {
+  const original = process.env.TELEGRAM_BOT_USERNAME;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.TELEGRAM_BOT_USERNAME;
+    else process.env.TELEGRAM_BOT_USERNAME = original;
+  });
+
+  it("prefers the configured handle so the bot can be swapped without a code change", () => {
+    process.env.TELEGRAM_BOT_USERNAME = "staging_digest_bot";
+    expect(resolveTelegramBotUsername()).toBe("staging_digest_bot");
+  });
+
+  it("strips a leading @ and surrounding whitespace from the env var", () => {
+    process.env.TELEGRAM_BOT_USERNAME = "  @bood_store_bot  ";
+    expect(resolveTelegramBotUsername()).toBe("bood_store_bot");
+  });
+
+  it("falls back to the default handle so the connect link always builds", () => {
+    // A missing env var must not leave Settings unable to hand out a deep link.
+    delete process.env.TELEGRAM_BOT_USERNAME;
+    expect(resolveTelegramBotUsername()).toBe(DEFAULT_TELEGRAM_BOT_USERNAME);
+
+    // An empty or whitespace-only value counts as unset: it would otherwise
+    // produce the useless `t.me/?start=…`.
+    process.env.TELEGRAM_BOT_USERNAME = "   ";
+    expect(resolveTelegramBotUsername()).toBe(DEFAULT_TELEGRAM_BOT_USERNAME);
+  });
+
+  it("yields a connect link for the default handle", () => {
+    delete process.env.TELEGRAM_BOT_USERNAME;
+    const token = createLinkToken();
+    expect(telegramDeepLink(resolveTelegramBotUsername(), token)).toBe(
+      `https://t.me/bood_store_bot?start=${token}`,
     );
   });
 });

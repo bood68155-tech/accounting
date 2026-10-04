@@ -9,7 +9,7 @@ import {
   revokeTelegramLinkTokens,
   unbindTelegramChat,
 } from "@/lib/data/telegramLinks";
-import { telegramDeepLink } from "@/lib/notifications/telegram";
+import { resolveTelegramBotUsername, telegramDeepLink } from "@/lib/notifications/telegram";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +63,7 @@ export async function GET(request: Request) {
   if ("error" in auth_) return NextResponse.json({ error: auth_.error }, { status: auth_.status });
 
   const binding = await fetchTelegramBinding(auth_.schema, auth_.storeId);
-  const botUsername = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "") ?? null;
+  const botUsername = resolveTelegramBotUsername();
   const botConfigured = Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim());
 
   return NextResponse.json({
@@ -85,17 +85,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Could not resolve your tenant.", status: 409 });
   }
 
-  const botUsername = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "");
-  if (!botUsername) {
-    return NextResponse.json(
-      {
-        error:
-          "TELEGRAM_BOT_USERNAME is not configured on the server, so the connect link cannot be built.",
-      },
-      { status: 503 },
-    );
-  }
-
+  const botUsername = resolveTelegramBotUsername();
   const { token, expiresAt } = await mintTelegramLinkToken(auth_.schema, tenantId, auth_.storeId);
 
   // The raw token is returned exactly once — only its hash is stored.

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Topbar } from "@/components/topbar";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -7,8 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { IconShield } from "@/components/icons";
+import { TelegramConnectCard } from "@/components/telegram-connect-card";
+import { auth } from "@/lib/auth";
+import { getTenantContext } from "@/lib/tenants";
+import { getTenantTables, isDatabaseConfigured, tenantDb } from "@/lib/db";
 
 export const metadata: Metadata = { title: "Settings" };
+// Renders the signed-in owner's stores, so it can never be cached at build time.
+export const dynamic = "force-dynamic";
 
 const SECRET_ROWS = [
   { label: "Shopify webhook secret", env: "SHOPIFY_WEBHOOK_SECRET", masked: "••••••••••••••••" },
@@ -16,7 +23,9 @@ const SECRET_ROWS = [
   { label: "PayPal webhook ID", env: "PAYPAL_WEBHOOK_ID", masked: "••••••••••••" },
 ];
 
-export default function SettingsPage() {
+export default async function SettingsPage() {
+  const stores = await loadStores();
+
   return (
     <main className="flex min-w-0 flex-1 flex-col">
       <Topbar title="Settings" subtitle="Workspace, accounting defaults and security" />
@@ -88,6 +97,27 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
 
+        {stores.length === 0 ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>No stores yet</CardTitle>
+              <CardDescription>
+                Connect a store before connecting Telegram — the bot is bound to one store at a
+                time.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Link href="/stores" className="text-sm text-white underline underline-offset-4 hover:opacity-70">
+                Go to Stores →
+              </Link>
+            </CardContent>
+          </Card>
+        ) : (
+          stores.map((store) => (
+            <TelegramConnectCard key={store.id} storeId={store.id} storeName={store.name} />
+          ))
+        )}
+
         <Card>
           <CardHeader className="flex-row items-center justify-between">
             <div>
@@ -128,4 +158,27 @@ export default function SettingsPage() {
       </div>
     </main>
   );
+}
+
+/**
+ * Stores the signed-in owner can bind a Telegram chat to.
+ *
+ * Returns an empty list — rather than throwing — when the database or the
+ * tenant is unavailable, so the rest of the settings page still renders for a
+ * user whose workspace has not been provisioned yet.
+ */
+async function loadStores(): Promise<Array<{ id: string; name: string }>> {
+  if (!isDatabaseConfigured()) return [];
+
+  const session = await auth();
+  if (!session?.user) return [];
+
+  const { schema } = await getTenantContext();
+  if (!schema) return [];
+
+  const t = getTenantTables(schema);
+  return tenantDb(schema)
+    .select({ id: t.stores.id, name: t.stores.name })
+    .from(t.stores)
+    .orderBy(t.stores.name);
 }

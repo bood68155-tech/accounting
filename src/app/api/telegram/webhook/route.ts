@@ -5,6 +5,7 @@ import {
   extractMessage,
   normalizeChatId,
   parseTelegramCommand,
+  resolveTelegramBotUsername,
   verifyTelegramWebhookSecret,
   type TelegramUpdate,
 } from "@/lib/notifications/telegram";
@@ -78,7 +79,7 @@ export async function POST(request: Request) {
       await reply(
         chatId,
         "This bot delivers your store's daily accounting digest.\n\n" +
-          "To connect it, open Settings → Notifications in your dashboard and " +
+          "To connect it, open Settings in your dashboard and " +
           "press “Connect Telegram Bot”. That gives you a personal link that binds this chat.",
       );
     }
@@ -89,14 +90,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, handled: false, reason: "no chat id" });
   }
 
-  const botUsername = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "") ?? null;
+  const botUsername = resolveTelegramBotUsername();
   const result = await bindTelegramChat(token, chat!, botUsername);
 
   if (result.ok) {
     await reply(
       chatId,
       `Connected ✓\n\nYour daily digest for ${result.storeName} will arrive here each morning.\n\n` +
-        "Change or disconnect it any time from Settings → Notifications.",
+        "Change or disconnect it any time from Settings.",
     );
     return NextResponse.json({ ok: true, handled: true, bound: true, store: result.storeName });
   }

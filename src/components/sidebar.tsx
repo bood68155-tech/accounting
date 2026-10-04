@@ -7,7 +7,6 @@ import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { Logo } from "@/components/logo";
 import {
-  IconBell,
   IconDashboard,
   IconLedger,
   IconOrders,
@@ -49,10 +48,7 @@ const NAV = [
   },
   {
     section: "Settings",
-    items: [
-      { href: "/settings", label: "Settings", icon: IconSettings },
-      { href: "/settings/notifications", label: "Notifications", icon: IconBell },
-    ],
+    items: [{ href: "/settings", label: "Settings", icon: IconSettings }],
   },
 ];
 

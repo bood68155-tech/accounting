@@ -22,6 +22,27 @@ export const LINK_TOKEN_PATTERN = /^tgl_[A-Za-z0-9_-]{43}$/;
 /** How long a minted link stays valid before it must be re-requested. */
 export const DEFAULT_LINK_TOKEN_TTL_HOURS = 24;
 
+/**
+ * Bot handle used when `TELEGRAM_BOT_USERNAME` is absent from the environment.
+ *
+ * The connect link has to resolve to *some* bot for the handshake to work, so
+ * the deployed handle is the default and the env var only exists to point at a
+ * different bot (a staging bot, or a rename) without a code change.
+ */
+export const DEFAULT_TELEGRAM_BOT_USERNAME = "bood_store_bot";
+
+/**
+ * The bot handle used to build connect links, normalised without its `@`.
+ *
+ * Falls back to {@link DEFAULT_TELEGRAM_BOT_USERNAME} so the `/start <token>`
+ * deep link is always buildable; an empty string is treated as unset because a
+ * half-configured env var would otherwise yield `t.me/?start=…`.
+ */
+export function resolveTelegramBotUsername(): string {
+  const configured = process.env.TELEGRAM_BOT_USERNAME?.trim().replace(/^@/, "") ?? "";
+  return configured || DEFAULT_TELEGRAM_BOT_USERNAME;
+}
+
 /** Mint a fresh single-use link token (256 bits of entropy). */
 export function createLinkToken(): string {
   return `${LINK_TOKEN_PREFIX}${randomBytes(32).toString("base64url")}`;
