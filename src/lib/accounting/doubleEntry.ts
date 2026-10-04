@@ -91,6 +91,8 @@ export function nextEntryNumber(entries: Array<Pick<JournalEntry, "entry_number"
  *   Cr  Sales Tax Payable           tax collected
  *   Dr  Cost of Goods Sold          Σ unit_cost × qty   (full COGS)
  *   Cr  Inventory                   Σ unit_cost × qty
+ *   Dr  Shipping Expense            shipping paid to carrier (cash out)
+ *   Cr  Cash                        shipping paid to carrier
  */
 export function createSaleEntry(order: Order, entryNumber: number): JournalEntry {
   const cogs = fullCogs(order);
@@ -105,6 +107,11 @@ export function createSaleEntry(order: Order, entryNumber: number): JournalEntry
   ];
   lines.push(line("5000", `COGS ${order.order_number} (${order.items.length} line items)`, cogs));
   lines.push(line("1200", `Inventory out for ${order.order_number}`, 0, cogs));
+  // Fulfilment cost is real cash out. Without this the GL would book revenue and
+  // COGS but never the shipping the store paid, so retained earnings (GL-derived)
+  // would overstate profit by Σ shipping_cost and contradict the orders-based P&L.
+  lines.push(line("5100", `Shipping cost ${order.order_number}`, order.shipping_cost));
+  lines.push(line("1000", `Shipping paid to carrier ${order.order_number}`, 0, order.shipping_cost));
 
   return validateEntry({
     store_id: order.store_id,
@@ -160,6 +167,8 @@ export function createRefundEntry(order: Order, refundAmount: number, entryNumbe
  *   Dr  Discounts Given            discounts
  *   Dr  Cost of Goods Sold         Σ unit_cost × qty
  *   Cr  Inventory                  Σ unit_cost × qty
+ *   Dr  Shipping Expense           shipping paid to carrier
+ *   Cr  Cash                       shipping paid to carrier
  *
  * The matching cash collection entry (`createPaymentCollectionEntry`) settles
  * the receivable when the gateway reports the charge — no P&L double-count:
@@ -177,6 +186,10 @@ export function createCreditSaleEntry(order: Order, entryNumber: number): Journa
   ];
   lines.push(line("5000", `COGS ${order.order_number} (${order.items.length} line items)`, cogs));
   lines.push(line("1200", `Inventory out for ${order.order_number}`, 0, cogs));
+  // Mirrors createSaleEntry: the fulfilment cost is expensed when the order is
+  // booked, not when the receivable settles, so GL profit ties to true profit.
+  lines.push(line("5100", `Shipping cost ${order.order_number}`, order.shipping_cost));
+  lines.push(line("1000", `Shipping paid to carrier ${order.order_number}`, 0, order.shipping_cost));
 
   return validateEntry({
     store_id: order.store_id,
@@ -239,10 +252,12 @@ export function createFeeEntry(
     reference,
     source: "fee",
     status: "posted",
-    lines: [
+    // Zero-amount fees drop to an empty entry and are rejected by validateEntry
+    // rather than persisted — journal_lines forbids (debit = 0 and credit = 0).
+    lines: dropZeroLines([
       line(accountCode, description, feeAmount),
       line("1000", `Cash out — ${description}`, 0, feeAmount),
-    ],
+    ]),
   });
 }
 
