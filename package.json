@@ -20,7 +20,8 @@
     "test:shopify": "node scripts/run-ts.mjs scripts/verify-shopify-pipeline.ts",
     "test:salla": "node scripts/run-ts.mjs scripts/verify-salla-pipeline.ts",
     "webhook:simulate": "node --env-file-if-exists=.env.local scripts/simulate-shopify-webhook.mjs",
-    "webhook:simulate-salla": "node --env-file-if-exists=.env.local scripts/simulate-salla-webhook.mjs"
+    "webhook:simulate-salla": "node --env-file-if-exists=.env.local scripts/simulate-salla-webhook.mjs",
+    "db:verify-digest": "node --env-file-if-exists=.env.local scripts/verify-digest-migration.mjs && node --env-file-if-exists=.env.local scripts/verify-digest-constraints.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
