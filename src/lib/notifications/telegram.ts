@@ -161,6 +161,15 @@ export interface TelegramUpdate {
   message?: TelegramMessage;
   channel_post?: TelegramMessage;
   my_chat_member?: { chat?: TelegramChat; from?: TelegramChat };
+  /** Inline keyboard button tap — carries the callback_data. */
+  callback_query?: {
+    id: string;
+    from: { id: number | string; first_name?: string | null; username?: string | null; language_code?: string | null };
+    message?: { chat: TelegramChat; message_id?: number; text?: string | null; reply_markup?: { inline_keyboard?: Array<Array<{ text: string; callback_data: string }>> } | null } | null;
+    data?: string | null;
+    /** Edited message that triggered the callback, if applicable. */
+    edited_message?: TelegramMessage | null;
+  } | null;
 }
 
 /**
@@ -171,6 +180,41 @@ export interface TelegramUpdate {
  */
 export function extractMessage(update: TelegramUpdate): TelegramMessage | null {
   return update.message ?? update.channel_post ?? null;
+}
+
+// ── Inline keyboard primitives (for interactive menus) ────────────────────────
+
+export interface InlineButton {
+  /** Button label shown to the user. */
+  text: string;
+  /** Opaque data returned to the bot when the button is tapped. Max 64 bytes. */
+  callback_data: string;
+}
+
+export interface InlineKeyboardMarkup {
+  inline_keyboard: Array<Array<InlineButton>>;
+}
+
+export interface ContactMessage {
+  /** Telegram's native contact object, attached when the user shares a contact. */
+  contact?: {
+    phone_number?: string | null;
+    first_name?: string | null;
+    last_name?: string | null;
+    user_id?: number | null;
+  } | null;
+}
+
+/**
+ * Pull a contact object out of a message, if the user shared one.
+ * Telegram sends Contact objects when the user taps a `request_contact` button.
+ */
+export function extractContact(message: TelegramMessage): ContactMessage['contact'] {
+  // Telegram adds the contact as a top-level field on the message object.
+  if (!message) return null;
+  // The message type from the Bot API includes a `contact` field when a contact
+  // was shared. We model this via a type assertion on the raw message.
+  return (message as TelegramMessage & { contact?: ContactMessage['contact'] }).contact ?? null;
 }
 
 /**
