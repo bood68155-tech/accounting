@@ -148,12 +148,22 @@ export interface TelegramChat {
   last_name?: string;
 }
 
+/** The contact object Telegram attaches when a `request_contact` button is tapped. */
+export interface TelegramContact {
+  phone_number?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  user_id?: number | null;
+}
+
 export interface TelegramMessage {
   message_id?: number;
   text?: string | null;
   chat?: TelegramChat;
   from?: TelegramChat;
   date?: number;
+  /** Present when the user shares a contact via a `request_contact` button. */
+  contact?: TelegramContact | null;
 }
 
 export interface TelegramUpdate {
@@ -171,6 +181,19 @@ export interface TelegramUpdate {
  */
 export function extractMessage(update: TelegramUpdate): TelegramMessage | null {
   return update.message ?? update.channel_post ?? null;
+}
+
+/**
+ * Pull the shared contact off a message.
+ *
+ * Telegram attaches a Contact object when the owner taps a `request_contact`
+ * keyboard button; its `phone_number` is the E.164-ish value the auth flow
+ * stores and later compares against the account on file.
+ */
+export function extractContact(
+  message: TelegramMessage | null | undefined,
+): TelegramContact | null {
+  return message?.contact ?? null;
 }
 
 /**
