@@ -171,6 +171,21 @@ export interface TelegramUpdate {
   message?: TelegramMessage;
   channel_post?: TelegramMessage;
   my_chat_member?: { chat?: TelegramChat; from?: TelegramChat };
+  /** Inline keyboard tap — carries the button's `callback_data`. */
+  callback_query?: TelegramCallbackQuery | null;
+}
+
+/** An inline keyboard button press. */
+export interface TelegramCallbackQuery {
+  id: string;
+  from?: TelegramChat;
+  /** The message the button was attached to (always present for inline menus). */
+  message?: {
+    message_id?: number;
+    chat?: TelegramChat;
+    text?: string | null;
+  } | null;
+  data?: string | null;
 }
 
 /**

@@ -2,11 +2,14 @@ import { NextResponse } from "next/server";
 import { bindTelegramChat } from "@/lib/data/telegramLinks";
 import {
   cancelTelegramAuth,
+  fetchTelegramUserStores,
   getTelegramSession,
   startTelegramAuth,
   upsertTelegramSession,
   verifyTelegramCredentials,
+  type TelegramUserStore,
 } from "@/lib/data/telegramAuth";
+import { fetchLedgerForDigest, fetchOrdersForPeriod } from "@/lib/data/digest";
 import { isValidEmail } from "@/lib/auth/otp";
 import {
   extractContact,
@@ -17,15 +20,18 @@ import {
   parseTelegramCommand,
   resolveTelegramBotUsername,
   verifyTelegramWebhookSecret,
+  type TelegramCallbackQuery,
   type TelegramChat,
   type TelegramUpdate,
 } from "@/lib/notifications/telegram";
+import { buildDailyDigest, renderDigestHtml } from "@/lib/notifications/digest";
 import {
   escapeHtml,
   sendTelegram,
   TELEGRAM_API_BASE,
   type HttpClient,
 } from "@/lib/notifications/channels";
+import { formatCurrency } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -33,18 +39,20 @@ export const dynamic = "force-dynamic";
  * POST /api/telegram/webhook — Telegram inbound updates for the digest bot and
  * the account-linking bot.
  *
- * Two flows share this endpoint:
+ * Three flows share this endpoint:
  *
  *  1. `/start <tenant_link_token>` — the store digest handshake. The token
  *     resolves to exactly one tenant schema, and the incoming `chat_id` is
- *     written into that store's `digest_settings`. This is the only path by
- *     which a chat id becomes trusted for digests; the token is single-use and
- *     short-lived.
+ *     written into that store's `digest_settings`. Single-use and short-lived.
  *
  *  2. `/start` (no token), then contact → email → app-password/PIN — the
- *     per-account verification flow in `src/lib/data/telegramAuth.ts`. The
- *     chat's step is persisted in `public.telegram_sessions`, because an
- *     inbound webhook carries no session and no tenant context.
+ *     per-account verification flow in `src/lib/data/telegramAuth.ts`, whose
+ *     step is persisted in `public.telegram_sessions` because a webhook carries
+ *     no session or tenant context.
+ *
+ *  3. Inline-keyboard taps on the post-verification store menu, which read the
+ *     store's balance, recent orders and financial summary through the same
+ *     accounting engines the dashboard and digest use.
  *
  * Register with:
  *   curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
@@ -69,6 +77,19 @@ const LINK_WELCOME_HTML =
   "<b>Step 1 of 3</b> — tap the button below to share your phone number.\n\n" +
   "Your number is used only to verify your identity and is never shared.";
 
+/** Inline keyboard rows — `callback_data` must stay under 64 bytes. */
+type InlineKeyboard = Array<Array<{ text: string; callback_data: string }>>;
+
+/** Keep the menu to a digestible size; each store adds two rows. */
+const MAX_MENU_STORES = 3;
+
+/** Orders listed by the "recent orders" button. */
+const RECENT_ORDER_LIMIT = 5;
+
+/** Days covered by the summary / recent-orders views. */
+const SUMMARY_WINDOW_DAYS = 30;
+const ORDERS_WINDOW_DAYS = 7;
+
 export async function POST(request: Request) {
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET;
   if (!secret) {
@@ -88,6 +109,16 @@ export async function POST(request: Request) {
     update = (await request.json()) as TelegramUpdate;
   } catch {
     return NextResponse.json({ error: "Malformed JSON." }, { status: 400 });
+  }
+
+  // ── Inline-keyboard taps (post-verification store menu) ─────────────────────
+  if (update.callback_query) {
+    try {
+      await handleCallbackQuery(update.callback_query);
+    } catch (error) {
+      console.error("[telegram] callback handling failed:", error);
+    }
+    return NextResponse.json({ ok: true, handled: true, flow: "callback" });
   }
 
   const message = extractMessage(update);
@@ -129,7 +160,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, handled: false, reason: "no chat id" });
   }
 
-  // ── Flow 2: account linking (contact → email → app password/PIN) ────────────
+  // ── Flows 2 & 3: account linking, then the store menu ──────────────────────
   try {
     const handled = await handleAccountLinking({
       chatId,
@@ -145,6 +176,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, handled: false, reason: "linking error" });
   }
 }
+
+// ── Account linking (contact → email → PIN) ───────────────────────────────────
 
 interface LinkingInput {
   chatId: string;
@@ -172,8 +205,13 @@ async function handleAccountLinking(input: LinkingInput): Promise<boolean> {
     return true;
   }
 
-  // ── /start — begin (or restart) the flow and ask for the phone ─────────────
+  // ── /start — resume a verified chat, else begin (or restart) the flow ───────
   if (command === "start") {
+    const existing = await getTelegramSession(chatId);
+    if (existing?.state === "verified" && existing.userId) {
+      await sendStoreMenu(chatId, existing.userId);
+      return true;
+    }
     await startTelegramAuth(chatId);
     await sendContactRequest(chatId);
     return true;
@@ -247,21 +285,23 @@ async function handleAccountLinking(input: LinkingInput): Promise<boolean> {
         const label = result.user.name ?? result.user.email;
         await sendTelegramHtml(
           chatId,
-          `🎉 <b>Account linked!</b>\n\n${escapeHtml(label)} is now connected to this chat.\n\n` +
-            "You'll receive your store notifications here.",
+          `🎉 <b>Account linked!</b>\n\n${escapeHtml(label)} is now connected to this chat.`,
         );
+        // The post-verification menu is built from the user's own stores.
+        await sendStoreMenu(chatId, result.user.id);
         return true;
       }
       await sendText(chatId, result.reason ?? "Verification failed. Send /start to try again.");
       return true;
     }
 
-    // ── Already verified — nothing left to do ───────────────────────────────
+    // ── Already verified — show the menu ────────────────────────────────────
     case "verified":
-      await sendText(
-        chatId,
-        "This chat is already linked to an account. Send /start to re-verify with different details.",
-      );
+      if (session.userId) {
+        await sendStoreMenu(chatId, session.userId);
+      } else {
+        await sendText(chatId, "This chat is already linked. Send /start to re-verify.");
+      }
       return true;
 
     // ── Still waiting on the phone: nudge toward the contact button ──────────
@@ -272,6 +312,171 @@ async function handleAccountLinking(input: LinkingInput): Promise<boolean> {
   }
 }
 
+// ── Post-verification inline menu ─────────────────────────────────────────────
+
+/** ISO date (UTC) `offsetDays` from today — the windows the actions query. */
+function isoDay(offsetDays = 0): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + offsetDays);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Build the store menu from the stores a user owns.
+ *
+ * Each store contributes a titled row (tapping it shows the financial summary)
+ * and a row with its balance and recent orders. Returns null when the user has
+ * no stores, so the caller can send a "nothing to show" hint instead.
+ */
+function buildStoreMenu(stores: TelegramUserStore[]): InlineKeyboard | null {
+  const shown = stores.slice(0, MAX_MENU_STORES);
+  if (shown.length === 0) return null;
+
+  const rows: InlineKeyboard = [];
+  for (const store of shown) {
+    rows.push([{ text: `🏪 ${store.storeName} — 📊 Summary`, callback_data: `sum:${store.storeId}` }]);
+    rows.push([
+      { text: "💰 Balance", callback_data: `bal:${store.storeId}` },
+      { text: "🧾 Recent orders", callback_data: `ord:${store.storeId}` },
+    ]);
+  }
+  return rows;
+}
+
+/** Fetch the user's stores and send the inline menu (or an empty-state hint). */
+async function sendStoreMenu(chatId: string, userId: string): Promise<void> {
+  const stores = await fetchTelegramUserStores(userId);
+  const menu = buildStoreMenu(stores);
+
+  if (!menu) {
+    await sendText(
+      chatId,
+      "✅ Account linked. You don't have any stores yet — add one in the dashboard and it will appear here.",
+    );
+    return;
+  }
+
+  await sendTelegramHtml(chatId, "📂 <b>Your stores</b>\n\nChoose what you'd like to see:", {
+    inlineKeyboard: menu,
+  });
+}
+
+type StoreAction = "bal" | "ord" | "sum";
+
+/** Parse `bal:<uuid>` / `ord:<uuid>` / `sum:<uuid>` callback data. */
+function parseStoreCallback(data: string | null | undefined): {
+  action: StoreAction;
+  storeId: string;
+} | null {
+  if (!data) return null;
+  const match = /^(bal|ord|sum):([0-9a-fA-F-]{36})$/.exec(data);
+  if (!match) return null;
+  return { action: match[1] as StoreAction, storeId: match[2] };
+}
+
+/** Handle a tap on the post-verification store menu. */
+async function handleCallbackQuery(callback: TelegramCallbackQuery): Promise<void> {
+  // Always acknowledge, even on failure: an unanswered tap leaves the button
+  // spinning with no feedback for the user.
+  await answerCallbackQuery(callback.id);
+
+  const chatId = normalizeChatId(callback.message?.chat);
+  if (!chatId) return;
+
+  const parsed = parseStoreCallback(callback.data);
+  if (!parsed) {
+    await sendText(chatId, "That button is no longer available. Send /start to see your stores.");
+    return;
+  }
+
+  const session = await getTelegramSession(chatId);
+  if (!session?.userId || !session.isVerified) {
+    await sendText(chatId, "Please link your account first — send /start.");
+    return;
+  }
+
+  // Resolve the tapped store from the user's own stores: the callback carries
+  // only an id, and this keeps the lookup scoped to what the chat may see.
+  const stores = await fetchTelegramUserStores(session.userId);
+  const store = stores.find((s) => s.storeId === parsed.storeId);
+  if (!store) {
+    await sendText(chatId, "That store is no longer available.");
+    return;
+  }
+
+  try {
+    await renderStoreAction(chatId, store, parsed.action);
+  } catch (error) {
+    // A tenant whose schema predates a migration has no tables to read; report
+    // it rather than failing the whole update.
+    console.error("[telegram] store action failed:", error);
+    await sendText(chatId, "Couldn't load that right now. Please try again later.");
+  }
+}
+
+/** Load a store's figures through the accounting engines and reply in chat. */
+async function renderStoreAction(
+  chatId: string,
+  store: TelegramUserStore,
+  action: StoreAction,
+): Promise<void> {
+  const to = isoDay();
+  const from = isoDay(-(action === "sum" ? SUMMARY_WINDOW_DAYS : ORDERS_WINDOW_DAYS) + 1);
+
+  const orders = await fetchOrdersForPeriod(store.schemaName, store.storeId, from, to);
+  const entries = await fetchLedgerForDigest(store.schemaName, store.storeId);
+  const digest = buildDailyDigest({
+    store: { id: store.storeId, name: store.storeName, currency: store.currency },
+    orders,
+    entries,
+    period: { from, to },
+  });
+
+  switch (action) {
+    case "sum": {
+      // renderDigestHtml already HTML-escapes its interpolations.
+      await sendTelegramHtml(chatId, renderDigestHtml(digest));
+      return;
+    }
+    case "bal": {
+      const c = digest.balances;
+      await sendTelegramHtml(
+        chatId,
+        `💰 <b>Balance — ${escapeHtml(store.storeName)}</b>\n\n` +
+          `Cash: <b>${escapeHtml(formatCurrency(c.cash, store.currency))}</b>\n` +
+          `Receivable: ${escapeHtml(formatCurrency(c.receivable, store.currency))}\n` +
+          `Inventory: ${escapeHtml(formatCurrency(c.inventory, store.currency))}\n` +
+          `Tax payable: ${escapeHtml(formatCurrency(c.tax_payable, store.currency))}`,
+      );
+      return;
+    }
+    case "ord": {
+      const recent = [...orders]
+        .sort((a, b) => b.ordered_at.localeCompare(a.ordered_at))
+        .slice(0, RECENT_ORDER_LIMIT);
+
+      if (recent.length === 0) {
+        await sendText(
+          chatId,
+          `🧾 No orders for ${store.storeName} in the last ${ORDERS_WINDOW_DAYS} days.`,
+        );
+        return;
+      }
+
+      const lines = recent.map(
+        (o) =>
+          `#${escapeHtml(o.order_number)} · ${escapeHtml(o.customer_name)} · ` +
+          `${escapeHtml(formatCurrency(o.total_amount, o.currency || store.currency))} · ${escapeHtml(o.status)}`,
+      );
+      await sendTelegramHtml(
+        chatId,
+        `🧾 <b>Recent orders — ${escapeHtml(store.storeName)}</b>\n\n${lines.join("\n")}`,
+      );
+      return;
+    }
+  }
+}
+
 // ── Telegram transport (interactive prompts must notify the user) ─────────────
 
 interface SendOptions {
@@ -279,10 +484,12 @@ interface SendOptions {
   removeKeyboard?: boolean;
   /** Show the phone-sharing button. */
   contactRequest?: boolean;
+  /** Attach an inline keyboard. */
+  inlineKeyboard?: InlineKeyboard;
 }
 
 /**
- * Send an HTML message, optionally with a reply keyboard.
+ * Send an HTML message, optionally with a reply or inline keyboard.
  *
  * Unlike the digest path (which uses `sendTelegram` and mutes notifications),
  * prompts are sent with notifications on — an auth step the user never sees
@@ -302,9 +509,11 @@ async function sendTelegramHtml(
         resize_keyboard: true,
         one_time_keyboard: true,
       }
-    : options.removeKeyboard
-      ? { remove_keyboard: true }
-      : undefined;
+    : options.inlineKeyboard
+      ? { inline_keyboard: options.inlineKeyboard }
+      : options.removeKeyboard
+        ? { remove_keyboard: true }
+        : undefined;
 
   try {
     await httpFetch(`${TELEGRAM_API_BASE}/bot${token}/sendMessage`, {
@@ -321,6 +530,21 @@ async function sendTelegramHtml(
   } catch {
     // Swallowed on purpose: the session state is already persisted, so a failed
     // prompt is retried by the user's next message rather than a 500.
+  }
+}
+
+/** Clear a button's loading spinner. */
+async function answerCallbackQuery(callbackQueryId: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+  if (!token) return;
+  try {
+    await httpFetch(`${TELEGRAM_API_BASE}/bot${token}/answerCallbackQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ callback_query_id: callbackQueryId }),
+    });
+  } catch {
+    // Best-effort.
   }
 }
 

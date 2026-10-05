@@ -22,6 +22,9 @@ interface Row {
 
 const sessions = new Map<string, Row>();
 
+/** Stores returned by the mocked `fetchTelegramUserStores` (set per test). */
+let stores: TelegramUserStore[] = [];
+
 vi.mock("@/lib/data/telegramAuth", () => ({
   AUTH_MAX_ATTEMPTS: 5,
   AUTH_LOCK_MINUTES: 15,
@@ -63,8 +66,15 @@ vi.mock("@/lib/data/telegramAuth", () => ({
     ok: true,
     user: { id: "u1", email: input.email, name: "Ada" },
   })),
-  fetchTelegramUserStores: vi.fn(async () => []),
+  fetchTelegramUserStores: vi.fn(async () => stores),
   sessionLabel: (session: Row) => session.email ?? session.phoneNumber ?? "your account",
+}));
+
+// The store figures come from the accounting engines; the loaders are stubbed so
+// these tests exercise the menu wiring, not the ledger math (covered elsewhere).
+vi.mock("@/lib/data/digest", () => ({
+  fetchOrdersForPeriod: vi.fn(async () => []),
+  fetchLedgerForDigest: vi.fn(async () => []),
 }));
 
 import { POST } from "@/app/api/telegram/webhook/route";
@@ -73,6 +83,7 @@ import {
   startTelegramAuth,
   upsertTelegramSession,
   verifyTelegramCredentials,
+  type TelegramUserStore,
 } from "@/lib/data/telegramAuth";
 
 interface Sent {
@@ -122,6 +133,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   sessions.clear();
+  stores = [];
 });
 
 describe("telegram webhook — account linking", () => {
@@ -208,5 +220,125 @@ describe("telegram webhook — account linking", () => {
 
     const markup = last().body.reply_markup as { keyboard: Array<Array<Record<string, unknown>>> };
     expect(markup.keyboard[0][0].request_contact).toBe(true);
+  });
+});
+
+// ── Post-verification store menu ──────────────────────────────────────────────
+
+const STORE_ID = "11111111-1111-1111-1111-111111111111";
+
+const sampleStore = (over: Partial<TelegramUserStore> = {}): TelegramUserStore => ({
+  tenantId: "t1",
+  tenantName: "Tenant A",
+  schemaName: `tenant_${"a".repeat(32)}`,
+  storeId: STORE_ID,
+  storeName: "Store A",
+  currency: "USD",
+  ...over,
+});
+
+/** Run the full contact → email → PIN flow so the chat ends up verified. */
+async function completeLinking(chatId: number): Promise<void> {
+  await post({ message: { text: "/start", chat: { id: chatId } } });
+  await post({ message: { contact: { phone_number: "+966500000000" }, chat: { id: chatId } } });
+  await post({ message: { text: "user@example.com", chat: { id: chatId } } });
+  await post({ message: { text: "123456", chat: { id: chatId } } });
+}
+
+/** The first message that carried an inline keyboard. */
+function menuMessage(): Sent | undefined {
+  return sent.find(
+    (s) => ((s.body.reply_markup as { inline_keyboard?: unknown } | undefined)?.inline_keyboard),
+  );
+}
+
+function seedVerified(chatId: string): void {
+  sessions.set(chatId, {
+    chatId,
+    userId: "u1",
+    phoneNumber: "+966500000000",
+    email: "user@example.com",
+    isVerified: true,
+    state: "verified",
+    attempts: 0,
+  });
+}
+
+describe("telegram webhook — post-verification store menu", () => {
+  it("offers balance, orders and summary buttons for each store after linking", async () => {
+    stores = [sampleStore()];
+    await completeLinking(901);
+
+    const menu = menuMessage();
+    expect(menu).toBeDefined();
+    const keyboard = (menu!.body.reply_markup as {
+      inline_keyboard: Array<Array<{ callback_data: string }>>;
+    }).inline_keyboard;
+    const datas = keyboard.flat().map((b) => b.callback_data);
+    expect(datas).toContain(`bal:${STORE_ID}`);
+    expect(datas).toContain(`ord:${STORE_ID}`);
+    expect(datas).toContain(`sum:${STORE_ID}`);
+    // Telegram rejects callback_data over 64 bytes.
+    for (const d of datas) expect(Buffer.byteLength(d, "utf8")).toBeLessThanOrEqual(64);
+  });
+
+  it("explains the empty state when the user owns no stores", async () => {
+    stores = [];
+    await completeLinking(902);
+    expect(String(last().body.text)).toContain("don't have any stores");
+  });
+
+  it("answers a balance tap with the store's balances", async () => {
+    stores = [sampleStore()];
+    seedVerified("903");
+    await post({
+      callback_query: { id: "cb-bal", data: `bal:${STORE_ID}`, message: { chat: { id: 903 } } },
+    });
+
+    expect(String(last().body.text)).toContain("Balance");
+    expect(String(last().body.text)).toContain("Cash");
+    // The loading spinner is always cleared.
+    expect(sent.some((s) => s.url.includes("answerCallbackQuery"))).toBe(true);
+  });
+
+  it("renders the financial summary for a summary tap", async () => {
+    stores = [sampleStore()];
+    seedVerified("904");
+    await post({
+      callback_query: { id: "cb-sum", data: `sum:${STORE_ID}`, message: { chat: { id: 904 } } },
+    });
+
+    const text = String(last().body.text);
+    expect(text).toContain("Store A");
+    expect(text).toContain("Balances");
+  });
+
+  it("answers a recent-orders tap even when there are no orders", async () => {
+    stores = [sampleStore()];
+    seedVerified("905");
+    await post({
+      callback_query: { id: "cb-ord", data: `ord:${STORE_ID}`, message: { chat: { id: 905 } } },
+    });
+
+    expect(String(last().body.text)).toContain("No orders");
+  });
+
+  it("refuses a menu tap when the chat is not verified", async () => {
+    stores = [sampleStore()];
+    await post({
+      callback_query: { id: "cb-x", data: `bal:${STORE_ID}`, message: { chat: { id: 906 } } },
+    });
+
+    expect(String(last().body.text)).toContain("link your account");
+  });
+
+  it("rejects a callback for a store the user does not own", async () => {
+    stores = [];
+    seedVerified("907");
+    await post({
+      callback_query: { id: "cb-y", data: `bal:${STORE_ID}`, message: { chat: { id: 907 } } },
+    });
+
+    expect(String(last().body.text)).toContain("no longer available");
   });
 });
