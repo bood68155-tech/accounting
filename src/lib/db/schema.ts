@@ -85,13 +85,6 @@ export const users = pgTable("users", {
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-  // ── Telegram user authentication & linking ──────────────────────────────────────
-  /** Telegram chat id bound to this user account (numeric string). */
-  telegramChatId: text("telegram_chat_id"),
-  /** Phone number shared via Telegram contact request (E.164, e.g. +966501234567). */
-  phoneNumber: text("phone_number"),
-  /** Whether the user has completed the Telegram verification flow. */
-  isVerified: boolean("is_verified").notNull().default(false),
 });
 
 /** NextAuth OAuth account links (provider ↔ user), e.g. Google. */
@@ -179,54 +172,7 @@ export const storeRegistry = pgTable("store_registry", {
 
 // ── Billing: plans, subscriptions, coupons, audit log (admin console) ────────
 
-// ── Telegram user authentication sessions ─────────────────────────────────────
-/**
- * Tracks the multi-step Telegram bot auth flow (contact → email → PIN) and the
- * resulting verified mapping of telegram_chat_id → user account.
- *
- * Columns:
- *  • telegram_chat_id — the Telegram numeric chat id (primary contact channel).
- *  • phone_number     — E.164 phone shared via Telegram's request_contact button.
- *  • email            — Gmail / account email the user entered in step 2.
- *  • verification_pin_hash — bcrypt hash of the app password / verification PIN
- *    the user entered in step 3 (plaintext only ever lives in the Telegram chat).
- *  • is_verified      — true once the PIN was verified against the Supabase DB.
- *  • user_id          — FK to public.users; set when the mapping is confirmed.
- *  • linked_at        — when the session was fully verified & linked.
- *
- * A row is created when the user sends /start and progresses through the flow;
- * it is updated at each step and finally marked verified when the PIN matches.
- * Only the PIN hash is stored — never the plaintext PIN.
- */
-export const telegramSessions = pgTable(
-  "telegram_sessions",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    /** Telegram numeric chat id — the primary key for the bot interaction. */
-    telegramChatId: text("telegram_chat_id").notNull().unique(),
-    /** E.164 phone number from Telegram contact request (e.g. +966501234567). */
-    phoneNumber: text("phone_number"),
-    /** Gmail / account email entered by the user in step 2. */
-    email: text("email"),
-    /** bcrypt hash of the app password / verification PIN (step 3). */
-    verificationPinHash: text("verification_pin_hash"),
-    /** Whether the PIN has been verified against the Supabase database. */
-    isVerified: boolean("is_verified").notNull().default(false),
-    /** FK to the verified user account, once linked. */
-    userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
-    /** Last bot interaction timestamp (for stale-session cleanup). */
-    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
-    /** When the session was fully verified & linked to a user account. */
-    linkedAt: timestamp("linked_at", { withTimezone: true }),
-  },
-  (t) => [
-    // Fast lookup by chat id for the bot webhook.
-    index("telegram_sessions_chat_idx").on(t.telegramChatId),
-    // Find pending sessions by phone+email for admin auditing.
-    index("telegram_sessions_phone_email_idx").on(t.phoneNumber, t.email),
-  ],
-);
-
+/** Plan tier with first-month / recurring monthly pricing. */
 /**
  * ── Telegram link tokens ────────────────────────────────────────────────────
  * Shared lookup for the `/start <token>` deep-link handshake. Telegram inbound
@@ -261,11 +207,6 @@ export const telegramLinkTokens = pgTable(
   ],
 );
 
-// ── Row shapes inferred from the schema (used by repositories) ───────────────
-export type TelegramSessionRow = typeof telegramSessions.$inferSelect;
-export type TelegramLinkTokenRow = typeof telegramLinkTokens.$inferSelect;
-
-/** Plan tier with first-month / recurring monthly pricing. */
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: uuid("id").primaryKey().defaultRandom(),
   code: text("code").notNull().unique(),
