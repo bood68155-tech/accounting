@@ -7,6 +7,7 @@
  * This module must stay side-effect free (no client creation) so it is safe to
  * import from anywhere, including drizzle-kit config.
  */
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -81,6 +82,10 @@ export const users = pgTable("users", {
   passwordHash: text("password_hash"),
   /** Name/email-verified state mirrored from the OAuth provider when present. */
   emailVerified: timestamp("email_verified", { withTimezone: true }),
+  /** Latest Telegram chat verified through the bot auth flow. */
+  telegramChatId: text("telegram_chat_id").unique(),
+  /** Phone number shared during Telegram verification (E.164-ish). */
+  phoneNumber: text("phone_number"),
   disabled: boolean("disabled").notNull().default(false),
   lastLoginAt: timestamp("last_login_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -207,6 +212,39 @@ export const telegramLinkTokens = pgTable(
   ],
 );
 
+/**
+ * Telegram bot authentication sessions & the verified chat mapping.
+ *
+ * An inbound Telegram webhook carries no tenant context, so the
+ * phone_number + email → telegram_chat_id mapping lives in the public
+ * schema (like telegram_link_tokens). `state` tracks which step of the
+ * contact → email → PIN flow the chat is on, because webhooks are
+ * stateless and Telegram gives the bot no other session storage.
+ */
+export const telegramSessions = pgTable(
+  "telegram_sessions",
+  {
+    chatId: text("chat_id").primaryKey(),
+    userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
+    phoneNumber: text("phone_number"),
+    email: text("email"),
+    isVerified: boolean("is_verified").notNull().default(false),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    /** awaiting_phone | awaiting_email | awaiting_pin | verified */
+    state: text("state").notNull().default("awaiting_phone"),
+    /** Failed PIN attempts; AUTH_MAX_ATTEMPTS locks the chat. */
+    attempts: integer("attempts").notNull().default(0),
+    lockedUntil: timestamp("locked_until", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("telegram_sessions_user_idx").on(t.userId).where(sql`is_verified`),
+    index("telegram_sessions_phone_idx").on(t.phoneNumber).where(sql`is_verified`),
+    index("telegram_sessions_email_idx").on(t.email).where(sql`is_verified`),
+  ],
+);
+
 export const subscriptionPlans = pgTable("subscription_plans", {
   id: uuid("id").primaryKey().defaultRandom(),
   code: text("code").notNull().unique(),
@@ -325,3 +363,4 @@ export type UserSubscriptionRow = typeof userSubscriptions.$inferSelect;
 export type CouponRow = typeof coupons.$inferSelect;
 export type CouponRedemptionRow = typeof couponRedemptions.$inferSelect;
 export type AdminAuditLogRow = typeof adminAuditLog.$inferSelect;
+export type TelegramSessionRow = typeof telegramSessions.$inferSelect;

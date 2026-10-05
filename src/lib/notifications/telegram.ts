@@ -192,3 +192,19 @@ export function normalizeChatId(chat: TelegramChat | undefined): string | null {
   const id = String(chat.id).trim();
   return id === "" ? null : id;
 }
+
+/**
+ * Normalize a phone number to E.164-ish form: a single leading `+` followed by
+ * digits only (spaces, dashes and parentheses removed, `00` dialling prefix
+ * stripped).
+ *
+ * Telegram shares contacts in a loose format, so the bot auth flow stores and
+ * compares numbers in this canonical form — a re-shared contact that differs
+ * only in punctuation still matches the account already on file.
+ */
+export function normalizeTelegramPhone(phone: string | null | undefined): string {
+  if (!phone) return "";
+  let digits = phone.replace(/\D/g, "");
+  if (digits.startsWith("00")) digits = digits.slice(2);
+  return digits === "" ? "" : `+${digits}`;
+}
