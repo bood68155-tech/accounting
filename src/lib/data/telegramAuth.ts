@@ -146,7 +146,7 @@ export interface TelegramVerifyInput {
   /** Normalized (digits with leading +) phone from the contact share. */
   phoneNumber: string;
   email: string;
-  /** App password or 6-digit verification PIN, as typed in chat. */
+  /** App password, or a 6-digit verification PIN/OTP, as typed in chat. */
   secret: string;
 }
 
@@ -154,11 +154,13 @@ export interface TelegramVerifyInput {
  * Step 4 of the flow: verify phone + email + app password/PIN
  * against `public.users`.
  *
- * The "PIN" is checked two ways, mirroring how the app itself
- * signs people in: a 6-digit input is a login OTP from
- * `public.otp_codes`, anything else is the account password
- * compared against its bcrypt hash. Google-only accounts have no
- * local password and must use an OTP.
+ * The secret is checked the same way the app's web login signs
+ * people in — bcrypt against the account's `password_hash`. A
+ * 6-digit input is checked as a password FIRST, so a real password
+ * that happens to be six digits (e.g. "123123") links normally;
+ * only when it does not match is it treated as a login OTP from
+ * `public.otp_codes`. Google-only accounts have no local password
+ * and must use an OTP.
  *
  * On success the session is marked verified, the phone+email →
  * chat mapping is stored, and `public.users` mirrors the latest
@@ -236,15 +238,18 @@ export async function verifyTelegramCredentials(
   }
 
   const secret = input.secret.trim();
-  let matched: boolean;
-  if (/^\d{6}$/.test(secret)) {
-    // 6-digit input: a login OTP (single use, 10-minute expiry).
+  // Verify the account password the way the web login does — bcrypt against
+  // `public.users.password_hash`. This runs FIRST even for a 6-digit input so an
+  // account whose real password is six digits (e.g. "123123") is never mistaken
+  // for a login OTP. The OTP path is only a fallback for inputs that are not the
+  // password (Google-only accounts have no local hash and must use an OTP).
+  let matched = false;
+  if (account.passwordHash) {
+    matched = await bcrypt.compare(secret, account.passwordHash);
+  }
+  if (!matched && /^\d{6}$/.test(secret)) {
+    // A 6-digit input that is not the password: a login OTP (single use, 10-min expiry).
     matched = (await verifyOtp(email, "login", secret)).ok;
-  } else {
-    // Anything else: the account password / app password.
-    matched = account.passwordHash
-      ? await bcrypt.compare(secret, account.passwordHash)
-      : false;
   }
   if (!matched) {
     return fail(
