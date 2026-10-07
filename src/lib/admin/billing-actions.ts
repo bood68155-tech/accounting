@@ -137,9 +137,10 @@ export interface CreatePendingPaymentInput {
   amountUsd: number;
   planCode: string | null;
 }
-export async function createPendingPayment(input: CreatePendingPaymentInput): Promise<ActionResult> {
-  const denied = await guard();
-  if (denied) return { ok: false, error: denied };
+async function insertPendingPayment(
+  userId: string,
+  input: { payId: string; txId: string; amountUsd: number; planCode: string | null },
+): Promise<ActionResult> {
   if (!input.payId || !input.txId) return { ok: false, error: "Pay ID and TxID are required." };
   if (!Number.isFinite(input.amountUsd) || input.amountUsd <= 0) {
     return { ok: false, error: "Amount must be a positive number." };
@@ -151,12 +152,12 @@ export async function createPendingPayment(input: CreatePendingPaymentInput): Pr
   const existing = await db
     .select({ id: pendingPayments.id })
     .from(pendingPayments)
-    .where(and(eq(pendingPayments.userId, input.userId), eq(pendingPayments.txId, input.txId)))
+    .where(and(eq(pendingPayments.userId, userId), eq(pendingPayments.txId, input.txId)))
     .limit(1);
   if (existing.length > 0) return { ok: false, error: "This TxID was already submitted." };
 
   await db.insert(pendingPayments).values({
-    userId: input.userId,
+    userId,
     payId: input.payId,
     txId: input.txId,
     amountUsd: input.amountUsd,
@@ -166,14 +167,41 @@ export async function createPendingPayment(input: CreatePendingPaymentInput): Pr
   });
 
   await audit("payment.pending", "pending_payment", input.txId, {
-    userId: input.userId,
+    userId,
     payId: input.payId,
     amountUsd: input.amountUsd,
     planCode: input.planCode,
   });
 
   revalidatePath("/admin");
+  revalidatePath("/renew");
   return { ok: true };
+}
+
+/** Admin-only: file a pending payment on behalf of a user. */
+export async function createPendingPayment(input: CreatePendingPaymentInput): Promise<ActionResult> {
+  const denied = await guard();
+  if (denied) return { ok: false, error: denied };
+  return insertPendingPayment(input.userId, input);
+}
+
+/**
+ * ── Self-serve renewal request (any signed-in user) ───────────────────────────
+ * Lets the account owner file a Binance Pay TxID against their own subscription;
+ * the admin still approves it. The user id comes from the session, never the
+ * caller, so a user can only submit for themselves.
+ */
+export async function submitRenewalRequest(input: {
+  payId: string;
+  txId: string;
+  amountUsd: number;
+  planCode: string | null;
+}): Promise<ActionResult> {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) return { ok: false, error: "You must be signed in to submit a payment." };
+  if (!isDatabaseConfigured()) return { ok: false, error: "Writes require a live database (DATABASE_URL)." };
+  return insertPendingPayment(userId, input);
 }
 
 export interface ApprovePaymentInput {

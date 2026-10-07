@@ -7,6 +7,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { Logo } from "@/components/logo";
 import {
+  IconCoin,
   IconDashboard,
   IconLedger,
   IconOrders,
@@ -48,7 +49,10 @@ const NAV = [
   },
   {
     section: "Settings",
-    items: [{ href: "/settings", label: "Settings", icon: IconSettings }],
+    items: [
+      { href: "/settings", label: "Settings", icon: IconSettings },
+      { href: "/renew", label: "Billing & Renewal", icon: IconCoin },
+    ],
   },
 ];
 

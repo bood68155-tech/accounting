@@ -5,6 +5,7 @@ import { isDatabaseConfigured, requireDb, publicSchema } from "@/lib/db";
 import { auth } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 import { getTenantContext } from "@/lib/tenants";
+import { resolveSubscriptionAccess } from "@/lib/subscription/access";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // The app requires a live Neon database. Show a helpful state instead of
@@ -34,6 +35,13 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const session = await auth();
   if (!session?.user) redirect("/login");
+
+  // ─── Subscription gate ───────────────────────────────────────────────────────
+  // After the 30-day trial expires (or a cancelled/past-due subscription), send
+  // the account to the self-serve renewal page until the admin approves payment.
+  // Admins and legacy accounts without a subscription record are always allowed.
+  const access = await resolveSubscriptionAccess(session.user.id, session.user.email);
+  if (!access.allowed) redirect("/renew");
 
   const { tenantId } = await getTenantContext();
   let tenantName = "Workspace";

@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/select";
 import { IconCoin, IconShield } from "@/components/icons";
 import { PendingPaymentsTab } from "@/components/admin/pending-payments-tab";
 import { PendingPaymentForm } from "@/components/admin/pending-payment-form";
+import { submitRenewalRequest } from "@/lib/admin/billing-actions";
 import { fetchAdminBillingData } from "@/lib/admin/billing-queries";
 import { formatCurrency } from "@/lib/utils";
 
@@ -107,7 +108,7 @@ export default async function RenewPage() {
                 </div>
 
                 <PendingPaymentForm
-                  userId={session.user.id}
+                  action={submitRenewalRequest}
                   defaultPlanCode={defaultPlan?.code ?? null}
                   defaultAmount={DEFAULT_AMOUNT_USD}
                 />

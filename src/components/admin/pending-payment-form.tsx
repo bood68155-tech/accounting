@@ -2,33 +2,45 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { createPendingPayment } from "@/lib/admin/billing-actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const BINANCE_PAY_ID = "1274571525";
 
+export interface RenewalActionInput {
+  payId: string;
+  txId: string;
+  amountUsd: number;
+  planCode: string | null;
+}
+
+export type RenewalAction = (
+  input: RenewalActionInput,
+) => Promise<{ ok: true } | { ok: false; error: string }>;
+
 /**
  * ── Manual Binance Pay submission form ────────────────────────────────────────
  * Client-only: collects the TxID (and the fixed Pay ID) and files a pending
- * payment for admin approval. The caller (a server component) resolves the
- * signed-in user id and passes it in.
+ * payment for admin approval. The caller passes the server action to invoke
+ * (`submitRenewalRequest` for self-serve, `createPendingPayment` for admin).
  */
 export function PendingPaymentForm({
-  userId,
+  action,
   defaultPlanCode,
   defaultAmount,
+  payId = BINANCE_PAY_ID,
 }: {
-  userId: string;
+  action: RenewalAction;
   defaultPlanCode: string | null;
   defaultAmount: number;
+  payId?: string;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const [form, setForm] = useState({
-    payId: BINANCE_PAY_ID,
+    payId,
     txId: "",
     amountUsd: String(defaultAmount),
     planCode: defaultPlanCode ?? "",
@@ -49,12 +61,11 @@ export function PendingPaymentForm({
     }
 
     startTransition(async () => {
-      const result = await createPendingPayment({
-        userId,
+      const result = await action({
         payId: form.payId,
         txId: form.txId.trim(),
         amountUsd: amount,
-        planCode: form.planCode,
+        planCode: form.planCode || null,
       });
 
       if (!result.ok) {
