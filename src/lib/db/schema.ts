@@ -257,7 +257,7 @@ export const subscriptionPlans = pgTable("subscription_plans", {
     .notNull()
     .default(30),
   currency: text("currency").notNull().default("USD"),
-  trialDays: integer("trial_days").notNull().default(14),
+  trialDays: integer("trial_days").notNull().default(30),
   isDefault: boolean("is_default").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -8,13 +8,12 @@ import { verifyVerifiedToken } from "@/lib/auth/verification";
 export const dynamic = "force-dynamic";
 
 /**
- * ── Signup (Drizzle + Neon) ───────────────────────────────────────────────────
+ * ── Signup (Drizzle + Neon) ────────────────────────────────────────────────────
  * Requires a verified email first: the client must POST /api/auth/otp/request
  * (6-digit code sent to the Gmail address) then /api/auth/otp/verify, and pass
  * the returned short-lived `otpToken` here. Creates the user (bcrypt-hashed
- * password) and provisions the tenant schema atomically via db.batch (Neon
- * HTTP executes the batch as a single transaction), then the client signs in
- * via the credentials flow with the same otpToken.
+ * password), provisions the tenant schema, and grants a 30-day free trial
+ * subscription automatically so new accounts can use the platform immediately.
  */
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -52,7 +51,7 @@ export async function POST(request: Request) {
   }
 
   const db = requireDb();
-  const { users, profiles } = publicSchema;
+  const { users, profiles, userSubscriptions } = publicSchema;
 
   try {
     const existing = await db
@@ -72,6 +71,11 @@ export async function POST(request: Request) {
     // The user id is generated up front so no statement depends on another's
     // result — required for Neon HTTP batch (non-interactive) transactions.
     const userId = randomUUID();
+
+    // Grant a 30-day free trial on signup so the account can use the platform
+    // immediately. The trial is anchored to now + 30 days (UTC).
+    const trialEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
     // Tenant/schema provisioning stays in raw SQL: provision_user_tenant()
     // runs dynamic DDL (create_tenant_schema) that an ORM cannot express.
     // Values are bound parameters; the function is created by the migration.
@@ -80,6 +84,12 @@ export async function POST(request: Request) {
     await db.batch([
       db.insert(users).values({ id: userId, email, passwordHash, emailVerified: new Date() }),
       db.insert(profiles).values({ id: userId, fullName }),
+      db.insert(userSubscriptions).values({
+        userId,
+        status: "trial",
+        trialEndsAt,
+        periodStart: new Date(),
+      }),
       db.execute(provision),
     ] as never);
 
