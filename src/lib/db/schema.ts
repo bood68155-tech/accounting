@@ -350,6 +350,33 @@ export const migrations = pgTable("_migrations", {
   appliedAt: timestamp("applied_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+// ── Manual Binance Pay pending-payment tables (admin/renew) ─────────────────
+export const pendingPayments = pgTable(
+  "pending_payments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    payId: text("pay_id").notNull(),
+    txId: text("tx_id").notNull().unique(),
+    amountUsd: numeric("amount_usd", { precision: 12, scale: 2, mode: "number" }).notNull(),
+    planCode: text("plan_code"),
+    requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+    status: text("status")
+      .notNull()
+      .default("pending")
+      .default("pending"),
+    reviewedBy: text("reviewed_by"),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+    rejectionReason: text("rejection_reason"),
+  },
+  (t) => [
+    index("pending_payments_user_idx").on(t.userId),
+    index("pending_payments_tx_idx").on(t.txId),
+  ],
+);
+
 // ── Row shapes inferred from the schema (used by repositories) ───────────────
 export type UserRow = typeof users.$inferSelect;
 export type AccountRow = typeof accounts.$inferSelect;
@@ -363,4 +390,5 @@ export type UserSubscriptionRow = typeof userSubscriptions.$inferSelect;
 export type CouponRow = typeof coupons.$inferSelect;
 export type CouponRedemptionRow = typeof couponRedemptions.$inferSelect;
 export type AdminAuditLogRow = typeof adminAuditLog.$inferSelect;
+export type PendingPaymentRow = typeof pendingPayments.$inferSelect;
 export type TelegramSessionRow = typeof telegramSessions.$inferSelect;

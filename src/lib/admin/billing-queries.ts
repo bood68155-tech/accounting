@@ -7,6 +7,7 @@ import type {
   AdminCoupon,
   AdminCouponRedemption,
   AdminPlan,
+  PendingPayment,
 } from "@/lib/admin/billing-types";
 
 // ─── Admin billing repository ─────────────────────────────────────────────────
@@ -41,7 +42,7 @@ export async function fetchAdminBillingData(): Promise<AdminBillingData> {
   const { users, profiles, subscriptionPlans, userSubscriptions, coupons, couponRedemptions, adminAuditLog } =
     publicSchema;
 
-  const [userRows, profileRows, planRows, subRows, couponRows, redemptionRows, auditRows] = await Promise.all([
+  const [userRows, profileRows, planRows, subRows, couponRows, redemptionRows, auditRows, pendingPaymentDbRows] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -112,6 +113,22 @@ export async function fetchAdminBillingData(): Promise<AdminBillingData> {
       .from(adminAuditLog)
       .orderBy(desc(adminAuditLog.createdAt))
       .limit(100),
+    db
+      .select({
+        id: pendingPaymentDbRows.id,
+        userId: pendingPaymentDbRows.userId,
+        payId: pendingPaymentDbRows.payId,
+        txId: pendingPaymentDbRows.txId,
+        amountUsd: pendingPaymentDbRows.amountUsd,
+        planCode: pendingPaymentDbRows.planCode,
+        requestedAt: pendingPaymentDbRows.requestedAt,
+        status: pendingPaymentDbRows.status,
+        reviewedBy: pendingPaymentDbRows.reviewedBy,
+        reviewedAt: pendingPaymentDbRows.reviewedAt,
+        rejectionReason: pendingPaymentDbRows.rejectionReason,
+      })
+      .from(pendingPayments)
+      .orderBy(desc(pendingPaymentDbRows.requestedAt)),
   ]);
 
   // Lookups
@@ -140,6 +157,13 @@ export async function fetchAdminBillingData(): Promise<AdminBillingData> {
 
   const currency = defaultPlan?.currency ?? "USD";
 
+  // Pending binance pay invoices grouped by the user who submitted them.
+  const pendingByUser = new Map<string, PendingPayment[]>();
+  for (const payment of pendingPaymentDbRows) {
+    const list = pendingByUser.get(payment.userId) ?? [];
+    pendingByUser.set(payment.userId, [...list, payment]);
+  }
+
   const billingUsers: AdminBillingUser[] = userRows.map((u) => {
     const sub = subByUser.get(u.id);
     const plan = sub?.planId ? planById.get(sub.planId) : undefined;
@@ -149,6 +173,7 @@ export async function fetchAdminBillingData(): Promise<AdminBillingData> {
       email: u.email,
       fullName: nameById.get(u.id) ?? null,
       disabled: u.disabled,
+      pendingPayments: pendingByUser.get(u.id) ?? [],
       createdAt: toIso(u.createdAt) ?? new Date().toISOString(),
       lastLoginAt: toIso(u.lastLoginAt),
       storeCount: storeCounts.get(u.id) ?? 0,
@@ -230,5 +255,25 @@ export async function fetchAdminBillingData(): Promise<AdminBillingData> {
     currency,
   };
 
-  return { plans, users: billingUsers, coupons: adminCoupons, redemptions, auditLog, totals };
+  return {
+    plans,
+    users: billingUsers,
+    coupons: adminCoupons,
+    redemptions,
+    auditLog,
+    pendingPayments: pendingPaymentDbRows.map((p) => ({
+      id: p.id,
+      userId: p.userId,
+      payId: p.payId,
+      txId: p.txId,
+      amountUsd: Number(p.amountUsd),
+      planCode: p.planCode,
+      requestedAt: toIso(p.requestedAt) ?? new Date().toISOString(),
+      status: p.status,
+      reviewedBy: p.reviewedBy,
+      reviewedAt: toIso(p.reviewedAt),
+      rejectionReason: p.rejectionReason,
+    })),
+    totals,
+  };
 }

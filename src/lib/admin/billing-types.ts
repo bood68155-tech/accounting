@@ -10,6 +10,19 @@ export type DiscountType = "percent" | "fixed";
 /** How long a coupon lasts (DB enum: coupon_duration). */
 export type CouponDuration = "once" | "repeating" | "forever";
 
+export interface PendingPayment {
+  id: string;
+  userId: string;
+  payId: string;
+  txId: string;
+  amountUsd: number;
+  planCode: string | null;
+  requestedAt: string;
+  status: "pending" | "approved" | "rejected";
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+}
+
 /** A plan tier: first month + recurring monthly price. */
 export interface AdminPlan {
   id: string;
@@ -98,6 +111,7 @@ export interface AdminBillingData {
   coupons: AdminCoupon[];
   redemptions: AdminCouponRedemption[];
   auditLog: AdminAuditEntry[];
+  pendingPayments: PendingPayment[];
   totals: {
     activeSubscriptions: number;
     trialSubscriptions: number;

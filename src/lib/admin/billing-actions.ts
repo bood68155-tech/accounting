@@ -125,6 +125,234 @@ export async function updateSubscription(input: UpdateSubscriptionInput): Promis
 }
 
 // ── Coupons ───────────────────────────────────────────────────────────────────
+// ── Manual Binance Pay payments ────────────────────────────────────────────────
+// Pending payments submitted via /admin/renew are reviewed by the super admin.
+// On approval the subscription is renewed/extended and the pending row is
+// marked approved so it can never be re-approved.
+
+export interface CreatePendingPaymentInput {
+  userId: string;
+  payId: string;
+  txId: string;
+  amountUsd: number;
+  planCode: string | null;
+}
+export async function createPendingPayment(input: CreatePendingPaymentInput): Promise<ActionResult> {
+  const denied = await guard();
+  if (denied) return { ok: false, error: denied };
+  if (!input.payId || !input.txId) return { ok: false, error: "Pay ID and TxID are required." };
+  if (!Number.isFinite(input.amountUsd) || input.amountUsd <= 0) {
+    return { ok: false, error: "Amount must be a positive number." };
+  }
+
+  const db = requireDb();
+  const { pendingPayments } = publicSchema;
+
+  const existing = await db
+    .select({ id: pendingPayments.id })
+    .from(pendingPayments)
+    .where(and(eq(pendingPayments.userId, input.userId), eq(pendingPayments.txId, input.txId)))
+    .limit(1);
+  if (existing.length > 0) return { ok: false, error: "This TxID was already submitted." };
+
+  await db.insert(pendingPayments).values({
+    userId: input.userId,
+    payId: input.payId,
+    txId: input.txId,
+    amountUsd: input.amountUsd,
+    planCode: input.planCode ?? null,
+    requestedAt: new Date(),
+    status: "pending",
+  });
+
+  await audit("payment.pending", "pending_payment", input.txId, {
+    userId: input.userId,
+    payId: input.payId,
+    amountUsd: input.amountUsd,
+    planCode: input.planCode,
+  });
+
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+export interface ApprovePaymentInput {
+  paymentId: string;
+  monthlyPrice?: number | null;
+  planId?: string | null;
+  notes?: string | null;
+}
+export async function approvePayment(input: ApprovePaymentInput): Promise<ActionResult> {
+  const denied = await guard();
+  if (denied) return { ok: false, error: denied };
+
+  const db = requireDb();
+  const { pendingPayments, userSubscriptions, subscriptionPlans } = publicSchema;
+
+  const payment = await db
+    .select()
+    .from(pendingPayments)
+    .where(eq(pendingPayments.id, input.paymentId))
+    .limit(1);
+  if (payment.length === 0) return { ok: false, error: "Pending payment not found." };
+  if (payment[0].status !== "pending") return { ok: false, error: "Payment is not pending." };
+
+  const p = payment[0];
+  const now = new Date();
+
+  // Determine the subscription values to apply on approval.
+  const planId =
+    input.planId === undefined ? undefined : input.planId === null ? null : input.planId;
+  const values: Partial<typeof userSubscriptions.$inferInsert> = {
+    updatedAt: now,
+    status: "active",
+    periodStart: now,
+    periodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+    cancelledAt: null,
+  };
+  if (input.monthlyPrice !== undefined) {
+    values.monthlyPrice = input.monthlyPrice === null ? null : input.monthlyPrice;
+  }
+  if (planId !== undefined) values.planId = planId;
+  if (input.notes !== undefined) values.notes = input.notes;
+
+  // Validate plan if provided.
+  if (typeof planId === "string") {
+    const plan = await db
+      .select({ id: subscriptionPlans.id })
+      .from(subscriptionPlans)
+      .where(eq(subscriptionPlans.id, planId))
+      .limit(1);
+    if (plan.length === 0) return { ok: false, error: "Unknown plan." };
+  }
+
+  // Upsert the user subscription (renew/extend).
+  const existing = await db
+    .select({ id: userSubscriptions.id })
+    .from(userSubscriptions)
+    .where(eq(userSubscriptions.userId, p.userId))
+    .limit(1);
+
+  if (existing.length === 0) {
+    await db.insert(userSubscriptions).values({
+      userId: p.userId,
+      ...values,
+    } as typeof userSubscriptions.$inferInsert);
+  } else {
+    await db
+      .update(userSubscriptions)
+      .set(values)
+      .where(eq(userSubscriptions.userId, p.userId));
+  }
+
+  // Mark the pending payment approved.
+  await db
+    .update(pendingPayments)
+    .set({
+      status: "approved",
+      reviewedBy: "bood68155@gmail.com",
+      reviewedAt: now,
+    })
+    .where(eq(pendingPayments.id, input.paymentId));
+
+  await audit("payment.approve", "pending_payment", input.paymentId, {
+    userId: p.userId,
+    payId: p.payId,
+    txId: p.txId,
+    amountUsd: p.amountUsd,
+    planCode: p.planCode,
+    monthlyPrice: values.monthlyPrice ?? null,
+    planId: values.planId ?? null,
+  });
+
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+export async function rejectPayment(paymentId: string, reason: string): Promise<ActionResult> {
+  const denied = await guard();
+  if (denied) return { ok: false, error: denied };
+  if (!reason.trim()) return { ok: false, error: "Rejection reason is required." };
+
+  const db = requireDb();
+  const { pendingPayments } = publicSchema;
+
+  const payment = await db
+    .select()
+    .from(pendingPayments)
+    .where(eq(pendingPayments.id, paymentId))
+    .limit(1);
+  if (payment.length === 0) return { ok: false, error: "Pending payment not found." };
+  if (payment[0].status !== "pending") return { ok: false, error: "Payment is not pending." };
+
+  await db
+    .update(pendingPayments)
+    .set({
+      status: "rejected",
+      reviewedBy: "bood68155@gmail.com",
+      reviewedAt: new Date(),
+      rejectionReason: reason.trim(),
+    })
+    .where(eq(pendingPayments.id, paymentId));
+
+  await audit("payment.reject", "pending_payment", paymentId, {
+    userId: payment[0].userId,
+    payId: payment[0].payId,
+    txId: payment[0].txId,
+    reason,
+  });
+
+  revalidatePath("/admin");
+  return { ok: true };
+}
+
+// ── Manual subscription extension ──────────────────────────────────────────────
+// Extends the current period by `months` (default 1) for a user, without a
+// payment record. Used by the admin quick-action "Extend subscription".
+
+export interface ExtendSubscriptionInput {
+  userId: string;
+  months?: number;
+  notes?: string | null;
+}
+export async function extendSubscription(input: ExtendSubscriptionInput): Promise<ActionResult> {
+  const denied = await guard();
+  if (denied) return { ok: false, error: denied };
+
+  const months = Math.max(1, input.months ?? 1);
+  const db = requireDb();
+  const { userSubscriptions } = publicSchema;
+
+  const sub = await db
+    .select()
+    .from(userSubscriptions)
+    .where(eq(userSubscriptions.userId, input.userId))
+    .limit(1);
+  if (sub.length === 0) return { ok: false, error: "No subscription found for this user." };
+
+  const currentEnd = sub[0].periodEnd;
+  const base = currentEnd instanceof Date ? currentEnd : currentEnd ? new Date(currentEnd) : new Date();
+  const newEnd = new Date(base.getTime() + months * 30 * 24 * 60 * 60 * 1000);
+
+  await db
+    .update(userSubscriptions)
+    .set({
+      periodEnd: newEnd,
+      periodStart: new Date(),
+      status: "active",
+      updatedAt: new Date(),
+      notes: input.notes !== undefined ? input.notes : sub[0].notes,
+    })
+    .where(eq(userSubscriptions.userId, input.userId));
+
+  await audit("subscription.extend", "user_subscription", input.userId, {
+    months,
+    newPeriodEnd: newEnd.toISOString(),
+  });
+
+  revalidatePath("/admin");
+  return { ok: true };
+}
 
 export interface UpsertCouponInput {
   id?: string;
