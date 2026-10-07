@@ -21,6 +21,7 @@ export interface PendingPayment {
   status: "pending" | "approved" | "rejected";
   reviewedBy: string | null;
   reviewedAt: string | null;
+  rejectionReason: string | null;
 }
 
 /** A plan tier: first month + recurring monthly price. */
