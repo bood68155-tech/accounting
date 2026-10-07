@@ -5,6 +5,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { requireAdminAccess } from "@/lib/admin/auth";
 import { isDatabaseConfigured, requireDb, publicSchema } from "@/lib/db";
+import { approvePendingPayment } from "@/lib/subscription/renewal";
 import type { BillingSubscriptionStatus, CouponDuration, DiscountType } from "@/lib/admin/billing-types";
 
 // ─── Admin billing actions (server-only mutations) ────────────────────────────
@@ -215,7 +216,7 @@ export async function approvePayment(input: ApprovePaymentInput): Promise<Action
   if (denied) return { ok: false, error: denied };
 
   const db = requireDb();
-  const { pendingPayments, userSubscriptions, subscriptionPlans } = publicSchema;
+  const { pendingPayments, subscriptionPlans } = publicSchema;
 
   const payment = await db
     .select()
@@ -226,23 +227,8 @@ export async function approvePayment(input: ApprovePaymentInput): Promise<Action
   if (payment[0].status !== "pending") return { ok: false, error: "Payment is not pending." };
 
   const p = payment[0];
-  const now = new Date();
-
-  // Determine the subscription values to apply on approval.
   const planId =
     input.planId === undefined ? undefined : input.planId === null ? null : input.planId;
-  const values: Partial<typeof userSubscriptions.$inferInsert> = {
-    updatedAt: now,
-    status: "active",
-    periodStart: now,
-    periodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
-    cancelledAt: null,
-  };
-  if (input.monthlyPrice !== undefined) {
-    values.monthlyPrice = input.monthlyPrice === null ? null : input.monthlyPrice;
-  }
-  if (planId !== undefined) values.planId = planId;
-  if (input.notes !== undefined) values.notes = input.notes;
 
   // Validate plan if provided.
   if (typeof planId === "string") {
@@ -254,34 +240,15 @@ export async function approvePayment(input: ApprovePaymentInput): Promise<Action
     if (plan.length === 0) return { ok: false, error: "Unknown plan." };
   }
 
-  // Upsert the user subscription (renew/extend).
-  const existing = await db
-    .select({ id: userSubscriptions.id })
-    .from(userSubscriptions)
-    .where(eq(userSubscriptions.userId, p.userId))
-    .limit(1);
-
-  if (existing.length === 0) {
-    await db.insert(userSubscriptions).values({
-      userId: p.userId,
-      ...values,
-    } as typeof userSubscriptions.$inferInsert);
-  } else {
-    await db
-      .update(userSubscriptions)
-      .set(values)
-      .where(eq(userSubscriptions.userId, p.userId));
-  }
-
-  // Mark the pending payment approved.
-  await db
-    .update(pendingPayments)
-    .set({
-      status: "approved",
-      reviewedBy: "bood68155@gmail.com",
-      reviewedAt: now,
-    })
-    .where(eq(pendingPayments.id, input.paymentId));
+  // Shared activation path — identical to the automated crypto webhook.
+  const result = await approvePendingPayment({
+    paymentId: input.paymentId,
+    reviewedBy: "bood68155@gmail.com",
+    notes: input.notes,
+    planId,
+    monthlyPrice: input.monthlyPrice,
+  });
+  if (!result.ok) return { ok: false, error: result.error };
 
   await audit("payment.approve", "pending_payment", input.paymentId, {
     userId: p.userId,
@@ -289,8 +256,8 @@ export async function approvePayment(input: ApprovePaymentInput): Promise<Action
     txId: p.txId,
     amountUsd: p.amountUsd,
     planCode: p.planCode,
-    monthlyPrice: values.monthlyPrice ?? null,
-    planId: values.planId ?? null,
+    monthlyPrice: input.monthlyPrice ?? null,
+    planId: planId ?? null,
   });
 
   revalidatePath("/admin");

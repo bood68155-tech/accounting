@@ -6,7 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { IconCoin, IconShield } from "@/components/icons";
 import { PendingPaymentForm } from "@/components/admin/pending-payment-form";
+import { CryptoCheckoutButton } from "@/components/crypto-checkout-button";
 import { submitRenewalRequest } from "@/lib/admin/billing-actions";
+import { isCryptoGatewayConfigured } from "@/lib/providers/nowpayments";
 import { resolveSubscriptionAccess } from "@/lib/subscription/access";
 import { isDatabaseConfigured, publicSchema, requireDb } from "@/lib/db";
 import { formatCurrency } from "@/lib/utils";
@@ -21,6 +23,7 @@ export default async function RenewSubscriptionPage() {
   if (!session?.user) redirect("/login");
 
   const access = await resolveSubscriptionAccess(session.user.id, session.user.email);
+  const cryptoConfigured = isCryptoGatewayConfigured();
 
   let planName: string | null = null;
   let planCode: string | null = null;
@@ -74,11 +77,27 @@ export default async function RenewSubscriptionPage() {
           </Card>
         )}
 
+        {cryptoConfigured && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Pay automatically with crypto</CardTitle>
+              <CardDescription>
+                USDT or another supported coin via our payment gateway — access is activated
+                automatically as soon as your transfer is confirmed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <CryptoCheckoutButton amountLabel={formatCurrency(planPrice, currency)} />
+            </CardContent>
+          </Card>
+        )}
+
         <Card>
           <CardHeader>
-            <CardTitle>Renew with Binance Pay</CardTitle>
+            <CardTitle>Renew with Binance Pay (manual)</CardTitle>
             <CardDescription>
-              Send USDT to the Pay ID below, then submit your Transaction ID (TxID).
+              Fallback: send USDT to the Pay ID below, then submit your Transaction ID (TxID)
+              for admin approval.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-5 pt-2">
