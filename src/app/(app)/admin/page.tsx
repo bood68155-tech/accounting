@@ -7,6 +7,7 @@ import { BillingTab } from "@/components/admin/billing-tab";
 import { CouponsTab } from "@/components/admin/coupons-tab";
 import { AuditTab } from "@/components/admin/audit-tab";
 import { IntegrityTab } from "@/components/admin/integrity-tab";
+import { PendingPaymentsTab } from "@/components/admin/pending-payments-tab";
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -99,6 +100,27 @@ export default async function AdminPage() {
           value={formatCompactCurrency(overview.total_fees, CURRENCY)}
           sublabel={`${formatPercent(fees.totals.effective_rate)} effective rate`}
           icon={<IconCoin className="h-5 w-5" />}
+        />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard
+          label={`Subscription revenue (${billing.totals.currency})`}
+          value={formatCompactCurrency(billing.totals.mrr, billing.totals.currency)}
+          sublabel={`${billing.totals.activeSubscriptions} active · ${billing.totals.trialSubscriptions} trial`}
+          icon={<IconCoin className="h-5 w-5" />}
+        />
+        <StatCard
+          label="Costs"
+          value={formatCompactCurrency(overview.total_fees, CURRENCY)}
+          sublabel="Payment gateway fees"
+          icon={<IconActivity className="h-5 w-5" />}
+        />
+        <StatCard
+          label={`Net profit (${billing.totals.currency})`}
+          value={formatCompactCurrency(billing.totals.mrr - overview.total_fees, billing.totals.currency)}
+          sublabel="Subscription revenue − costs"
+          icon={<IconShield className="h-5 w-5" />}
         />
       </div>
 
@@ -309,6 +331,7 @@ export default async function AdminPage() {
   );
 
   const billingTab = <BillingTab data={billing} />;
+  const paymentsTab = <PendingPaymentsTab data={billing} />;
   const couponsTab = <CouponsTab data={billing} />;
   const auditTab = <AuditTab entries={billing.auditLog} />;
   const integrityTab = <IntegrityTab data={integrity} />;
@@ -338,6 +361,7 @@ export default async function AdminPage() {
           tabs={[
             { id: "overview", label: "Overview", content: overviewTab },
             { id: "billing", label: "Billing", content: billingTab },
+            { id: "payments", label: "Payments", content: paymentsTab },
             { id: "coupons", label: "Coupons", content: couponsTab },
             { id: "integrity", label: "Integrity", content: integrityTab },
             { id: "audit", label: "Audit log", content: auditTab },

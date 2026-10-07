@@ -4,17 +4,14 @@ import { auth } from "@/lib/auth";
 import { isAdminEmail } from "@/lib/admin/auth";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { IconCoin, IconShield } from "@/components/icons";
 import { PendingPaymentsTab } from "@/components/admin/pending-payments-tab";
-import { createPendingPayment } from "@/lib/admin/billing-actions";
+import { PendingPaymentForm } from "@/components/admin/pending-payment-form";
 import { fetchAdminBillingData } from "@/lib/admin/billing-queries";
-import { formatCurrency, cn } from "@/lib/utils";
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { formatCurrency } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Binance Pay Renewal" };
 
@@ -110,9 +107,9 @@ export default async function RenewPage() {
                 </div>
 
                 <PendingPaymentForm
+                  userId={session.user.id}
                   defaultPlanCode={defaultPlan?.code ?? null}
                   defaultAmount={DEFAULT_AMOUNT_USD}
-                  defaultPlanName={defaultPlan?.name ?? null}
                 />
               </CardContent>
             </Card>
@@ -153,104 +150,5 @@ export default async function RenewPage() {
         </div>
       </div>
     </main>
-  );
-}
-
-function PendingPaymentForm({
-  defaultPlanCode,
-  defaultAmount,
-  defaultPlanName,
-}: {
-  defaultPlanCode: string | null;
-  defaultAmount: number;
-  defaultPlanName: string | null;
-}) {
-  const router = useRouter();
-  const [isPending, startTransition] = useTransition();
-  const [message, setMessage] = useState<string | null>(null);
-  const [form, setForm] = useState({
-    payId: BINANCE_PAY_ID,
-    txId: "",
-    amountUsd: String(defaultAmount),
-    planCode: defaultPlanCode ?? "",
-  });
-
-  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setMessage(null);
-
-    const amount = Number.parseFloat(form.amountUsd);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      setMessage("Enter a valid positive amount.");
-      return;
-    }
-    if (!form.txId.trim()) {
-      setMessage("Please enter the Transaction ID (TxID).");
-      return;
-    }
-
-    startTransition(async () => {
-      const user = await auth();
-      if (!user?.user?.id) {
-        setMessage("Unable to identify the current user.");
-        return;
-      }
-
-      const result = await createPendingPayment({
-        userId: user.user.id,
-        payId: form.payId,
-        txId: form.txId.trim(),
-        amountUsd: amount,
-        planCode: form.planCode,
-      });
-
-      if (!result.ok) {
-        setMessage(result.error);
-        return;
-      }
-
-      setMessage("Invoice queued — your TxID is now pending admin approval.");
-      router.refresh();
-    });
-  }
-
-  return (
-    <form className="space-y-4 pt-2" onSubmit={onSubmit}>
-      <div className="space-y-1.5">
-        <Label htmlFor="tx-id">Transaction ID (TxID)</Label>
-        <Input
-          id="tx-id"
-          value={form.txId}
-          onChange={(e) => setForm((f) => ({ ...f, txId: e.target.value }))}
-          placeholder="Paste Binance Pay TxID here"
-          className="font-mono text-sm"
-        />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label htmlFor="pay-id">Pay ID</Label>
-          <Input id="pay-id" value={form.payId} readOnly className="bg-zinc-800/40 text-zinc-300" />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="plan-code">Plan code</Label>
-          <Input id="plan-code" value={form.planCode} readOnly className="bg-zinc-800/40 text-zinc-300" />
-        </div>
-      </div>
-
-      {message && (
-        <p role="status" className="border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-300">
-          {message}
-        </p>
-      )}
-
-      <Button
-        type="submit"
-        className="w-full"
-        disabled={isPending}
-      >
-        {isPending ? "Submitting… · admin approval required" : "Submit Binance Pay invoice"}
-      </Button>
-    </form>
   );
 }
