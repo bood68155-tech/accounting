@@ -124,6 +124,33 @@ describe("triageReplies", () => {
     expect(buckets[2]).toBe("NOISE");
     expect(buckets[3]).toBe("SUBSTANCE");
   });
+
+  it('catches the "check my profile" pitch that never says "check out"', () => {
+    const [triaged] = triageReplies([{ text: "Check my profile for free crypto" }]);
+    expect(triaged.bucket).toBe("NOISE");
+  });
+});
+
+describe("runTask · plan", () => {
+  it("normalises a lowercase angle type instead of crashing", async () => {
+    const result = await runTask(
+      { action: "plan", payload: { angles: [{ type: "proof", angle: "a store that found $4,200" }] } },
+      { config: offlineConfig },
+    );
+    expect(result.ok).toBe(true);
+    const data = result.data as { slots: Array<{ type: string }> };
+    expect(data.slots[0].type).toBe("PROOF");
+  });
+
+  it("rejects an unknown angle type with a readable message", async () => {
+    const result = await runTask(
+      { action: "plan", payload: { angles: [{ type: "bogus", angle: "x" }] } },
+      { config: offlineConfig },
+    );
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/unknown angle type/i);
+    expect(result.error).toMatch(/PROOF/);
+  });
 });
 
 describe("buildDm", () => {

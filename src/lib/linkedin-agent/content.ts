@@ -255,6 +255,8 @@ const LEAD_SIGNALS = [
 
 const NOISE_SIGNALS = [
   /\bcheck (out|this out)\b.*\b(my|our|new)\b/i,
+  // "Check my profile / bio / link …" pitch that never says "check out".
+  /\b(check|see|visit)\s+(my|our)\s+(profile|bio|link|page|website|channel|course|newsletter)\b/i,
   /\bwe (help|specialize)\b/i,
   /\bbook a (call|demo)\b/i,
   /\bDM me\b/i,
@@ -386,7 +388,8 @@ export function buildDm(input: DmInput): DmOutput {
 
 // ── li-plan: the week ─────────────────────────────────────────────────────────
 
-export type PlanSlotType = "PROOF" | "OPINION" | "TEACH" | "STORY" | "OFFER";
+export const PLAN_SLOT_TYPES = ["PROOF", "OPINION", "TEACH", "STORY", "OFFER"] as const;
+export type PlanSlotType = (typeof PLAN_SLOT_TYPES)[number];
 
 export interface PlanInput {
   /** ISO date of the Monday, or today's week. */

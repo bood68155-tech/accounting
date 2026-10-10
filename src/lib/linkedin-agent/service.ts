@@ -22,6 +22,7 @@ import {
   getHookRules,
   COMMENT_TYPES,
   REPLY_GUIDANCE,
+  PLAN_SLOT_TYPES,
   type DraftPostInput,
   type DmInput,
   type PlanInput,
@@ -194,8 +195,20 @@ export async function runTask(
       }
 
       case "plan": {
-        const angles = arr<{ type: PlanSlotType; angle: string; hookId?: number }>(payload.angles);
-        if (!angles.length) throw new Error("`angles` must be a non-empty array of { type, angle }.");
+        const raw = arr<{ type?: unknown; angle?: unknown; hookId?: unknown }>(payload.angles);
+        if (!raw.length) throw new Error("`angles` must be a non-empty array of { type, angle }.");
+        // The webhook receives untrusted JSON, so normalise the slot type and
+        // fail with a readable message instead of a TypeError deep in buildPlan.
+        const angles = raw.map((entry) => {
+          const type = String(entry?.type ?? "").toUpperCase() as PlanSlotType;
+          if (!PLAN_SLOT_TYPES.includes(type))
+            throw new Error(
+              `Unknown angle type "${String(entry?.type)}". Allowed: ${PLAN_SLOT_TYPES.join(", ")}.`,
+            );
+          const angle = str(entry?.angle).trim();
+          if (!angle) throw new Error("Each angle needs a non-empty `angle`.");
+          return { type, angle, hookId: num(entry?.hookId) };
+        });
         const input: PlanInput = {
           weekOf: str(payload.weekOf) || undefined,
           angles,
