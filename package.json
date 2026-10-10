@@ -22,7 +22,8 @@
     "webhook:simulate": "node --env-file-if-exists=.env.local scripts/simulate-shopify-webhook.mjs",
     "webhook:simulate-salla": "node --env-file-if-exists=.env.local scripts/simulate-salla-webhook.mjs",
     "db:verify-digest": "node --env-file-if-exists=.env.local scripts/verify-digest-migration.mjs && node --env-file-if-exists=.env.local scripts/verify-digest-constraints.mjs",
-    "db:verify-telegram": "node --env-file-if-exists=.env.local scripts/verify-telegram-binding.mjs"
+    "db:verify-telegram": "node --env-file-if-exists=.env.local scripts/verify-telegram-binding.mjs",
+    "linkedin": "node --env-file-if-exists=.env.local scripts/run-ts.mjs scripts/linkedin-agent/cli.ts"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.1.0",
