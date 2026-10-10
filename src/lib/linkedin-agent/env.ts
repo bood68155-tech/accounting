@@ -16,7 +16,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): LinkedInAgentC
     liAtCookie: env.LINKEDIN_LI_AT_COOKIE?.trim() || null,
     jsessionId: env.LINKEDIN_JSESSIONID?.trim() || null,
     httpEnabled: isTruthy(env.LINKEDIN_AGENT_ENABLE_HTTP),
-    webhookSecret: env.LINKEDIN_WEBHOOK_SECRET?.trim() || null,
+    // Canonical name first; `LINKEDIN_WEBHOOK_SECRET` is the pre-rename alias.
+    webhookSecret: (env.LINKEDIN_AGENT_WEBHOOK_SECRET ?? env.LINKEDIN_WEBHOOK_SECRET)?.trim() || null,
     voicePath: env.LINKEDIN_VOICE_PATH?.trim() || null,
   };
 }

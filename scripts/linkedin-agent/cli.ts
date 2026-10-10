@@ -46,7 +46,7 @@ Flags:
   --help             show this message
 
 Env: LINKEDIN_LI_AT_COOKIE, LINKEDIN_JSESSIONID, LINKEDIN_AGENT_ENABLE_HTTP,
-     LINKEDIN_WEBHOOK_SECRET, LINKEDIN_VOICE_PATH`;
+     LINKEDIN_AGENT_WEBHOOK_SECRET, LINKEDIN_VOICE_PATH`;
 
 const rawArgs = process.argv.slice(2);
 // `scripts/run-ts.mjs` loads this file with jiti in-process, so the script path

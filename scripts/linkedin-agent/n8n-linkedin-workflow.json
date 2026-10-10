@@ -1,0 +1,259 @@
+{
+  "name": "LinkedIn Agent — content generation + lead triage",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 9
+            }
+          ]
+        }
+      },
+      "id": "a1f0c2e0-0001-4000-8000-000000000001",
+      "name": "Every Morning",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [260, 320]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.APP_URL || 'http://localhost:3000') }}/api/linkedin/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($env.LINKEDIN_AGENT_WEBHOOK_SECRET || '') }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"action\":\"humanize\",\"payload\":{\"text\":\"Most e-commerce store owners think they are profitable because revenue is up. In today's landscape it is crucial to delve into the true cost structure - COGS, shipping and gateway fees - in order to uncover the seamless reality of your margins.\"}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1f0c2e0-0002-4000-8000-000000000002",
+      "name": "Humanize Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 200],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.APP_URL || 'http://localhost:3000') }}/api/linkedin/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($env.LINKEDIN_AGENT_WEBHOOK_SECRET || '') }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ action: 'post', payload: { text: $json.data.text, hashtags: ['ecommerce', 'accounting', 'profit'] } }) }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1f0c2e0-0003-4000-8000-000000000003",
+      "name": "Prepare Post",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [740, 200],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($env.APP_URL || 'http://localhost:3000') }}/api/linkedin/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ 'Bearer ' + ($env.LINKEDIN_AGENT_WEBHOOK_SECRET || '') }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"action\":\"leads\",\"payload\":{\"keywords\":\"ecommerce founder Shopify Salla store owner\",\"count\":10}}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a1f0c2e0-0004-4000-8000-000000000004",
+      "name": "Fetch Leads",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 460],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Score each person returned by the `leads` action. The Voyager payload shape is\n// undocumented, so every lookup is defensive: a missing or renamed field means\n// fewer leads, never a crashed run.\nconst payload = $input.first()?.json?.data ?? {};\nconst keywords = String(payload.keywords ?? '')\n  .toLowerCase()\n  .split(/\\W+/)\n  .filter((word) => word.length > 4);\n\nconst raw = payload.result?.elements ?? payload.result ?? [];\nconst leads = Array.isArray(raw) ? raw : [];\n\nconst text = (value) => {\n  if (typeof value === 'string') return value;\n  if (value && typeof value.text === 'string') return value.text;\n  if (value && typeof value.localized === 'object') {\n    return Object.values(value.localized).find((v) => typeof v === 'string') ?? '';\n  }\n  return '';\n};\n\nreturn leads.map((item) => {\n  const profile = item?.memberSummary ?? item?.miniProfile ?? item ?? {};\n  const name =\n    [text(profile.firstName), text(profile.lastName)].filter(Boolean).join(' ') ||\n    text(profile.name) ||\n    'Unknown';\n  const headline =\n    text(profile.headline) || text(profile.occupation?.title) || text(profile.title);\n  const haystack = `${name} ${headline}`.toLowerCase();\n\n  const matched = keywords.filter((word) => haystack.includes(word)).length;\n  const senior = /owner|founder|ceo|head of|director|cfo|accountant/.test(haystack) ? 15 : 0;\n  const score = Math.min(99, 40 + matched * 30 + senior);\n\n  return { json: { name, headline, score, keywords: payload.keywords } };\n});"
+      },
+      "id": "a1f0c2e0-0005-4000-8000-000000000005",
+      "name": "Score Leads",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 460]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "high-score-threshold",
+              "leftValue": "={{ $json.score }}",
+              "rightValue": 70,
+              "operator": {
+                "type": "number",
+                "operation": "gte",
+                "singleValue": false
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a1f0c2e0-0006-4000-8000-000000000006",
+      "name": "Score 70 or Higher",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [980, 460],
+      "outputs": ["main", "main"]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.TELEGRAM_CHAT_ID }}",
+        "text": "=🔔 High-score lead ({{ $json.score }}/99)\n\n{{ $json.name }}\n{{ $json.headline }}\n\nKeywords: {{ $json.keywords }}\n\nReply with something genuinely useful — an answer or a number, not a pitch.",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a1f0c2e0-0007-4000-8000-000000000007",
+      "name": "Telegram: High-Score Lead",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1240, 380]
+    }
+  ],
+  "connections": {
+    "Every Morning": {
+      "main": [
+        [
+          {
+            "node": "Humanize Draft",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Fetch Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Humanize Draft": {
+      "main": [
+        [
+          {
+            "node": "Prepare Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Leads": {
+      "main": [
+        [
+          {
+            "node": "Score Leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Leads": {
+      "main": [
+        [
+          {
+            "node": "Score 70 or Higher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score 70 or Higher": {
+      "main": [
+        [
+          {
+            "node": "Telegram: High-Score Lead",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "UTC"
+  },
+  "pinData": {}
+}

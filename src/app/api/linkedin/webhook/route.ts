@@ -9,7 +9,7 @@ import { runTask, type LinkedInAction, type TaskRequest } from "@/lib/linkedin-a
  * Body: `{ "action": "<humanize|detect|analyze|hooks|post|comment|reply|dm|
  * plan|profile|leads|share|health>", "payload": { ... } }`
  *
- * Auth: `Authorization: Bearer $LINKEDIN_WEBHOOK_SECRET` (or the
+ * Auth: `Authorization: Bearer $LINKEDIN_AGENT_WEBHOOK_SECRET` (or the
  * `x-webhook-secret` header). Without a configured secret the endpoint refuses
  * every request rather than exposing the content tools and, worse, the
  * `leads`/`share` actions to anonymous callers. Compared in constant time.
@@ -44,10 +44,18 @@ function verifySecret(provided: string | null, expected: string): boolean {
 }
 
 export async function POST(request: Request) {
-  const secret = process.env.LINKEDIN_WEBHOOK_SECRET?.trim();
+  // `LINKEDIN_AGENT_WEBHOOK_SECRET` is canonical; the pre-rename
+  // `LINKEDIN_WEBHOOK_SECRET` keeps working so a deploy configured with the old
+  // name does not silently start refusing requests.
+  const secret = (
+    process.env.LINKEDIN_AGENT_WEBHOOK_SECRET ?? process.env.LINKEDIN_WEBHOOK_SECRET
+  )?.trim();
   if (!secret) {
     return NextResponse.json(
-      { error: "LINKEDIN_WEBHOOK_SECRET is not configured — refusing inbound requests." },
+      {
+        error:
+          "LINKEDIN_AGENT_WEBHOOK_SECRET is not configured — refusing inbound requests.",
+      },
       { status: 500 },
     );
   }
