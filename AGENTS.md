@@ -1,4 +1,4 @@
-# AGENTS.md — X
+# AGENTS.md — NUV Accounting
 
 Guidance for AI coding agents working in this repository.
 

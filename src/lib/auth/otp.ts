@@ -433,13 +433,13 @@ function template(email: string, code: string, purpose: OtpPurpose): { subject: 
   const action = isReset ? "reset your password" : purpose === "signup" ? "create your account" : "sign in";
   const minutes = OTP_TTL_MINUTES;
   return {
-    subject: isReset ? "Reset Your Password" : `Your X verification code: ${code}`,
+    subject: isReset ? "Reset Your Password" : `Your NUV Accounting verification code: ${code}`,
     text: `Your ${isReset ? "password reset code" : "verification code"} is ${code}. It expires in ${minutes} minutes. Enter this code to ${action}. If you didn't request this, you can ignore this email.`,
     html: `<!doctype html>
 <html><body style="margin:0;padding:0;background:#0b0d10;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;">
   <div style="max-width:480px;margin:0 auto;padding:32px 24px;">
     <div style="background:#111318;border:1px solid #27272a;border-radius:16px;padding:32px;">
-      <p style="margin:0 0 8px;color:#a1a1aa;font-size:13px;">X — Automated AI Accounting</p>
+      <p style="margin:0 0 8px;color:#a1a1aa;font-size:13px;">NUV Accounting — Automated AI Accounting</p>
       <h1 style="margin:0 0 16px;color:#fafafa;font-size:20px;">${isReset ? "Reset your password" : "Verify your email"}</h1>
       <p style="margin:0 0 20px;color:#d4d4d8;font-size:14px;line-height:1.6;">
         Use this 6-digit code to ${action}:
@@ -544,11 +544,11 @@ async function sendViaNodemailer(
     let from: string;
     let replyTo: string | undefined;
     if (gmailUser && gmailPass) {
-      const name = process.env.EMAIL_FROM_NAME?.trim() || "StoreAccountant";
+      const name = process.env.EMAIL_FROM_NAME?.trim() || "NUV Accounting";
       from = `${name} <${gmailUser}>`;
       replyTo = gmailUser;
     } else {
-      from = process.env.SMTP_FROM?.trim() || "X <noreply@x.app>";
+      from = process.env.SMTP_FROM?.trim() || "NUV Accounting <noreply@nuvaccounting.com>";
       replyTo = undefined;
     }
     await transporter.sendMail({ from, replyTo, to: email, subject, text, html });

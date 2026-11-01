@@ -21,7 +21,7 @@ export interface SendOtpResult {
 
 /** The From identity — configurable via env, falls back to Resend's sandbox. */
 export function otpFromAddress(): string {
-  const name = process.env.EMAIL_FROM_NAME?.trim() || "StoreAccountant";
+  const name = process.env.EMAIL_FROM_NAME?.trim() || "NUV Accounting";
   const address =
     process.env.EMAIL_FROM?.trim() ||
     process.env.SMTP_FROM?.trim() ||

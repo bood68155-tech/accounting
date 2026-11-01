@@ -1,8 +1,8 @@
-# 📒 X
+# 📒 NUV Accounting
 
 **Automated AI Accounting & Profitability Engine for E-commerce Stores.**
 
-X connects to online stores via webhooks/APIs, computes **true net profit**
+NUV Accounting connects to online stores via webhooks/APIs, computes **true net profit**
 (item cost, shipping and payment-gateway fees), automates **double-entry bookkeeping**
 (general ledger & COGS), and produces **financial statements** (income statement). It is
 **multi-tenant**: every workspace gets its own Postgres schema (schema-per-tenant isolation)

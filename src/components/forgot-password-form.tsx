@@ -185,7 +185,7 @@ export function ForgotPasswordForm() {
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-app px-4 py-10 sm:px-6">
       <p className="type-kicker pointer-events-none absolute left-4 top-4 text-zinc-700 sm:left-6 sm:top-6">
-        X / Accounts — 02 Reset
+        NUV Accounting — 02 Reset
       </p>
       <p className="type-kicker pointer-events-none absolute bottom-4 right-4 text-zinc-700 sm:bottom-6 sm:right-6">
         Secure / Verified / Tenant-Isolated

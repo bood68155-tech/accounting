@@ -125,7 +125,7 @@ export default function LandingPage() {
                 </h2>
               </div>
               <p className="max-w-md text-sm leading-relaxed text-zinc-400">
-                Store Accountant turns messy platform data into clean, double-entry books — so you
+                NUV Accounting turns messy platform data into clean, double-entry books — so you
                 always know what you&apos;re really making.
               </p>
             </div>
@@ -225,7 +225,7 @@ export default function LandingPage() {
         <div className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-4 py-10 sm:px-6 md:flex-row md:items-center">
           <Logo size={24} />
           <p className="type-kicker text-zinc-600">
-            Store Accountant — Automated AI Accounting &amp; Profitability Engine
+            NUV Accounting — Automated AI Accounting &amp; Profitability Engine
           </p>
           <div className="type-kicker flex gap-6 text-zinc-500">
             <a href="#features" className="transition-colors duration-100 hover:text-white">Features</a>

@@ -14,11 +14,11 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "X — Automated AI Accounting for E-commerce",
-    template: "%s · X",
+    default: "NUV Accounting — Automated AI Accounting for E-commerce",
+    template: "%s · NUV Accounting",
   },
   description:
-    "Connect your store, compute true net profit (item cost, shipping & gateway fees), and get automated double-entry bookkeeping with income statements.",
+    "NUV Accounting connects your store, computes true net profit (item cost, shipping & gateway fees), and automates double-entry bookkeeping with income statements.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

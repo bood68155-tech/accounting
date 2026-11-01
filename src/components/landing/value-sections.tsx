@@ -266,7 +266,7 @@ export function ValueSections() {
             what it earns.
           </>
         }
-        body="Revenue is vanity. Store Accountant nets out item cost, shipping, gateway fees, discounts and refunds — per order, per SKU, per day — and posts it to your books automatically."
+        body="Revenue is vanity. NUV Accounting nets out item cost, shipping, gateway fees, discounts and refunds — per order, per SKU, per day — and posts it to your books automatically."
         bullets={[
           "True net profit computed on every webhook, in real time",
           "Refunds, partial refunds and fee reversals handled for you",

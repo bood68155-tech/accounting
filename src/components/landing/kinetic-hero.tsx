@@ -90,7 +90,7 @@ export function KineticHero() {
   });
 
   return (
-    <section ref={rootRef} aria-label="Store Accountant manifesto" className="relative h-[340vh]">
+    <section ref={rootRef} aria-label="NUV Accounting manifesto" className="relative h-[340vh]">
       <div className="sticky top-0 flex h-screen flex-col justify-center overflow-hidden bg-app">
         {/* Parallax watermark — giant mono-stroke brand mark */}
         <div
@@ -99,7 +99,7 @@ export function KineticHero() {
           className="pointer-events-none absolute inset-0 flex items-center justify-center will-change-transform"
         >
           <span className="type-display text-outline-faint select-none text-[42vw] leading-none">
-            SA
+            NA
           </span>
         </div>
 
@@ -108,21 +108,21 @@ export function KineticHero() {
           className="relative mx-auto w-full max-w-7xl px-4 will-change-transform sm:px-6"
         >
           <p ref={kickerRef} className="type-kicker text-accent will-change-transform">
-            00 — Store Accountant · Automated AI accounting for e-commerce
+            00 — NUV Accounting · Automated AI accounting for e-commerce
           </p>
 
           <h1 className="mt-5 sm:mt-7">
             <span className="sr-only">
-              Store Accountant — Accounting for e-commerce is not what you think it is.
+              NUV Accounting — Accounting for e-commerce is not what you think it is.
             </span>
             <div
               ref={line1Ref}
               aria-hidden
               className="type-display text-[clamp(3.2rem,12.5vw,11rem)] leading-[0.9] text-white will-change-transform"
             >
-              Store
+              NUV
               <br />
-              Accountant<span className="text-accent">.</span>
+              Accounting<span className="text-accent">.</span>
             </div>
 
             {/* Red banner words — clipped wrappers so they can slam in */}

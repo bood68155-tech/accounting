@@ -1,8 +1,8 @@
-# X — Automated AI Accounting & Profitability Engine
+# NUV Accounting — Automated AI Accounting & Profitability Engine
 
 **System summary & architecture reference** — updated September 24, 2026.
 
-X is a multi-tenant, double-entry accounting engine for e-commerce stores. Orders arrive as platform
+NUV Accounting is a multi-tenant, double-entry accounting engine for e-commerce stores. Orders arrive as platform
 webhooks (Shopify, Salla, Stripe, PayPal, WooCommerce), are normalized, enriched with true item
 costs from the product catalog, posted as balanced journal entries into an **immutable ledger**,
 and power dashboards, P&L, balance sheet and AI insights. Corrections are **reversing entries** —

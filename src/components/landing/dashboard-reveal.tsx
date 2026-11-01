@@ -245,10 +245,10 @@ function WindowChrome() {
   return (
     <div className="flex items-center justify-between border-b border-white px-4 py-3">
       <span className="type-kicker text-white">
-        Store Accountant <span className="text-zinc-600">/ dashboard</span>
+        NUV Accounting <span className="text-zinc-600">/ dashboard</span>
       </span>
       <span className="hidden font-mono text-[10px] text-zinc-600 sm:block">
-        app.storeaccountant.com/dashboard · tenant_9f2c
+        app.nuvaccounting.com/dashboard · tenant_9f2c
       </span>
     </div>
   );

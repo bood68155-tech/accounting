@@ -28,7 +28,7 @@ export function OtpEmail({
   code,
   purpose,
   minutes,
-  appName = "X — Automated AI Accounting",
+  appName = "NUV Accounting — Automated AI Accounting",
 }: OtpEmailProps) {
   const isReset = purpose === "password_reset";
   const action = isReset ? "reset your password" : purpose === "signup" ? "create your account" : "sign in";

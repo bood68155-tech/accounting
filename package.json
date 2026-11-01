@@ -1,8 +1,8 @@
 {
-  "name": "x",
+  "name": "nuv-accounting",
   "version": "0.1.0",
   "private": true,
-  "description": "X — Automated AI Accounting & Profitability Engine for E-commerce Stores",
+  "description": "NUV Accounting — Automated AI Accounting & Profitability Engine for E-commerce Stores",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

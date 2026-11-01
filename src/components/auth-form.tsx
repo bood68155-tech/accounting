@@ -280,7 +280,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-app px-4 py-10 sm:px-6">
       {/* Editorial backdrop: numbered kicker, stark black — no glows */}
       <p className="type-kicker pointer-events-none absolute left-4 top-4 text-zinc-700 sm:left-6 sm:top-6">
-        X / Accounts — {isLogin ? "01 Sign in" : "01 Register"}
+        NUV Accounting — {isLogin ? "01 Sign in" : "01 Register"}
       </p>
       <p className="type-kicker pointer-events-none absolute bottom-4 right-4 text-zinc-700 sm:bottom-6 sm:right-6">
         Secure / Verified / Tenant-Isolated
@@ -302,7 +302,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
               {step === "verify"
                 ? `Enter the 6-digit code we sent to ${email}`
                 : isLogin
-                  ? "Sign in to your X workspace"
+                  ? "Sign in to your NUV Accounting workspace"
                   : "Start automating your bookkeeping"}
             </CardDescription>
           </CardHeader>
